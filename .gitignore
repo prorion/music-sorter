@@ -1,0 +1,34 @@
+# 비밀 정보
+.env
+.env.*
+!.env.example
+
+# DB, 캐시, 로그
+data/
+*.db
+*.sqlite
+*.sqlite3
+cache/
+logs/
+*.log
+
+# 음악 파일과 생성된 재생목록
+*.mp3
+*.flac
+*.m4a
+*.m3u
+*.m3u8
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
