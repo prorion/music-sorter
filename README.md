@@ -11,6 +11,7 @@ mp3 음악 자동 장르·분위기 분류 및 재생목록 생성기
 
 - [설계 문서 (정본)](docs/SPEC.md)
 - [결정 이력](docs/DECISIONS.md)
+- [논의 히스토리](docs/HISTORY.md)
 - [작업 규칙](CLAUDE.md)
 
 ## 설정

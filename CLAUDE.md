@@ -9,13 +9,15 @@
 | 정보 | 정본 문서 |
 |---|---|
 | 설계, 분류 체계, 동작 방식, 미결정 사항 | [docs/SPEC.md](docs/SPEC.md) |
-| 결정 이력 (언제, 왜 정했는지) | [docs/DECISIONS.md](docs/DECISIONS.md) |
+| 결정 이력 (언제, 왜 정했는지, 검토한 대안) | [docs/DECISIONS.md](docs/DECISIONS.md) |
+| 논의 흐름과 맥락 | [docs/HISTORY.md](docs/HISTORY.md) |
 | 작업 규칙 | 이 문서 (CLAUDE.md) |
 | 설정 항목 목록 | [.env.example](.env.example) |
 | 프로젝트 소개 | [README.md](README.md) (요약과 링크만, 설계 내용은 쓰지 않는다) |
 
 - 설계가 바뀌면 **SPEC.md를 먼저 고치고**, 그다음 코드를 고친다.
-- 결정을 내리면 SPEC.md에 반영하고, DECISIONS.md에 날짜와 이유를 한 줄 남긴다.
+- 결정을 내리면 SPEC.md에 반영하고, DECISIONS.md에 날짜·이유·검토한 대안을 한 줄 남긴다.
+- 의논이 한 단락 끝나면 HISTORY.md에 흐름을 요약해 둔다.
 - 코드와 SPEC.md가 다르면 버그다. 어느 쪽이 맞는지 확인해서 맞춘다.
 - 새 설정 항목을 추가하면 `.env.example`에 같이 추가한다.
 
