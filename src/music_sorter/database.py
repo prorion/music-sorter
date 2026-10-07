@@ -64,6 +64,7 @@ class Library:
                     id INTEGER PRIMARY KEY, track_id TEXT NOT NULL, previous TEXT NOT NULL,
                     current TEXT NOT NULL, action TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS history_track_id ON classification_history(track_id,id);
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL,
                     processed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
@@ -204,7 +205,7 @@ class Library:
                     encode(item), state, encode(empty_classification()), stamp, stamp))
         return track_id
 
-    def finish_scan(self, job_id: str, root: Path, recursive: bool, failed_directories: list[str]) -> dict:
+    def finish_scan(self, job_id: str, root: Path, recursive: bool, failed_directories: list[str], excluded_directories=()) -> dict:
         counts = dict(new=0, unchanged=0, moved=0, changed=0, pending=0, missing=0)
         root_key = path_key(root)
 
@@ -214,7 +215,7 @@ class Library:
                 return False
             if key != root_key and not key.startswith(root_key + "\\") and not key.startswith(root_key + "/"):
                 return False
-            return not any(key == bad or key.startswith(bad + "\\") or key.startswith(bad + "/") for bad in failed_directories)
+            return not any(key == bad or key.startswith(bad + "\\") or key.startswith(bad + "/") for bad in [*failed_directories, *excluded_directories])
 
         with self.connection(write=True) as db:
             # Reconcile the complete inventory, not traversal order; copying must never steal the source ID.
@@ -367,6 +368,36 @@ class Library:
                    (row["id"], encode(original), encode(updated), action, now()))
         db.execute("UPDATE tracks SET classification=?,review_state=?,revision=revision+1,updated_at=? WHERE id=?",
                    (encode(updated), review_state(updated), now(), row["id"]))
+        db.execute('UPDATE playlist_outputs SET dirty=1')
+
+    def classification_history(self, track_id, offset=0, limit=200):
+        with self.connection() as db:
+            total = db.execute('SELECT count(*) FROM classification_history WHERE track_id=?', (track_id,)).fetchone()[0]
+            rows = db.execute('SELECT * FROM classification_history WHERE track_id=? ORDER BY id DESC LIMIT ? OFFSET ?',
+                              (track_id, min(500, max(1, limit)), max(0, offset))).fetchall()
+        return [dict(row) for row in rows], total
+
+    def restore_classification(self, track_id, history_id, revision):
+        """Revert a reviewed DB decision, preserving every history entry and file byte."""
+        with self.connection(write=True) as db:
+            row = db.execute('SELECT * FROM tracks WHERE id=?', (track_id,)).fetchone()
+            history = db.execute('SELECT * FROM classification_history WHERE id=? AND track_id=?', (history_id, track_id)).fetchone()
+            if not row or not history or row['revision'] != revision:
+                raise ValueError('곡의 판정이 갱신되었습니다. 이력을 다시 열어 주세요.')
+            if row['file_state'] != 'ready':
+                raise ValueError('파일 상태를 먼저 확인하세요.')
+            updated = json.loads(history['previous'])
+            validate(updated)
+            self._save_classification(db, row, json.loads(row['classification']), updated, f'restore_history:{history_id}')
+
+    def bulk_summary(self, job_id):
+        with self.connection() as db:
+            job = db.execute("SELECT * FROM jobs WHERE id=? AND kind='manual_bulk'", (job_id,)).fetchone()
+            if not job:
+                raise ValueError('일괄 수정 작업을 찾을 수 없습니다.')
+            counts = dict(db.execute('SELECT state,count(*) FROM bulk_targets WHERE job_id=? GROUP BY state', (job_id,)).fetchall())
+        return dict(job_id=job_id, state=job['state'], total=sum(counts.values()),
+                    **{key: counts.get(key, 0) for key in ('eligible', 'blocked', 'unchanged')})
 
     def accept_external_change(self, track_id: str, inherit_manual: bool, as_new=False) -> str:
         from .scanner import read_snapshot

@@ -14,7 +14,8 @@ def empty_classification() -> dict:
                    "source": None, "confidence": None, "reason": ""} for axis in AXES}
 
 
-def validate(classification: dict) -> None:
+def validate(classification: dict, taxonomy=None) -> None:
+    taxonomy = TAXONOMY if taxonomy is None else taxonomy
     major = classification["major"]["value"]
     for axis in AXES:
         field = classification[axis]
@@ -25,7 +26,7 @@ def validate(classification: dict) -> None:
             if value is not None:
                 raise ValueError("미확정 항목의 값은 비워야 합니다.")
             continue
-        allowed = TAXONOMY["major"].get(major, []) if axis == "subgenre" else TAXONOMY[axis]
+        allowed = taxonomy["major"].get(major, []) if axis == "subgenre" else taxonomy[axis]
         if axis in {"major", "vocal"}:
             if value not in allowed:
                 raise ValueError(f"{LABELS[axis]} 허용 목록을 확인하세요.")

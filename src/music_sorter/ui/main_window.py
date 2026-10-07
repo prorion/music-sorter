@@ -81,15 +81,16 @@ class ScanWorker(QThread):
     result = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, library, root, recursive, parent=None):
+    def __init__(self, library, root, recursive, parent=None, *, exclude=(), resume_job=None):
         super().__init__(parent)
         self.library, self.root, self.recursive = library, root, recursive
+        self.exclude, self.resume_job = exclude, resume_job
         self.control = ScanControl()
 
     def run(self):
         try:
             result = scan_library(self.library, self.root, self.recursive, self.control,
-                                  lambda count, failed: self.progress.emit(count, failed))
+                                  lambda count, failed: self.progress.emit(count, failed), exclude=self.exclude, resume_job=self.resume_job)
             self.result.emit(result)
         except Exception as error:
             self.error.emit(type(error).__name__)
@@ -148,7 +149,7 @@ class MainWindow(QMainWindow):
         tagline = QLabel("나의 음악, 더 선명하게.")
         tagline.setObjectName("subtle")
         sidebar_layout.addWidget(tagline)
-        sidebar_layout.addSpacing(28)
+        sidebar_layout.addSpacing(12)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
         for title, glyph in (("음악 라이브러리", "library"), ("분류 검토", "review"), ("중복 검토", "duplicates"),
@@ -497,6 +498,15 @@ class MainWindow(QMainWindow):
             self.open_file_ops(job['id'])
         elif job['kind'] == 'llm':
             self.open_classify(job['id'])
+        elif job['kind'] == 'manual_bulk':
+            if not self.discard_edits():
+                return
+            BulkDialog(self.library, {}, [], self, job_id=job['id']).exec()
+            self.refresh()
+        elif job['kind'] == 'scan' and job['state'] in {'cancelled', 'failed', 'interrupted'}:
+            if QMessageBox.question(self, '스캔 체크포인트 재개', '저장된 관찰과 같은 범위로 스캔을 재개할까요?\n모든 파일 내용은 다시 검증하며, 일치하는 완료 파일은 메타데이터를 재사용합니다. 음악 파일은 바꾸지 않습니다.',
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                self.start_scan(job['id'])
         else:
             QMessageBox.information(self, '작업 상세', job['detail'] or '상세 기록 없음')
 
@@ -518,7 +528,7 @@ class MainWindow(QMainWindow):
             self.offset = max(0, self.offset + direction * self.page_size)
             self.refresh()
 
-    def start_scan(self):
+    def start_scan(self, resume_job=None):
         if self.worker and self.worker.isRunning():
             return
         if not self.discard_edits():
@@ -542,7 +552,8 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status.setText("전체 내용 해시·메타데이터 스캔 중")
-        self.worker = ScanWorker(self.library, Path(self.settings.music_root), self.settings.include_subfolders, self)
+        self.worker = ScanWorker(self.library, Path(self.settings.music_root), self.settings.include_subfolders, self,
+                                 exclude=self.settings.scan_exclude_folders, resume_job=resume_job if isinstance(resume_job, str) else None)
         self.worker.progress.connect(lambda count, failed: self.status.setText(f"스캔 · {count:,}곡 읽음 · {failed:,}개 확인 실패"))
         self.worker.result.connect(self.scan_result)
         self.worker.error.connect(lambda _: self.status.setText("스캔 실패 · 폴더 접근 상태를 확인하고 작업 이력을 보세요"))
@@ -565,6 +576,8 @@ class MainWindow(QMainWindow):
             self.status.setText("취소 요청 · 이미 기록한 관찰은 보존하고 누락 판정을 보류합니다")
 
     def scan_result(self, result):
+        if self.settings.notify_on_completion:
+            QApplication.alert(self, 3000)
         if result.get("cancelled"):
             self.status.setText("스캔 취소 · 누락 판정 없음 · 다시 스캔할 수 있습니다")
         else:
@@ -585,6 +598,8 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "스캔 중", "스캔을 마치거나 취소한 뒤 설정을 변경하세요.")
             return
+        if not self.discard_edits():
+            return
         dialog = SettingsDialog(self.settings, self.config_path, self.library, self)
         dialog.settings_saved.connect(self.settings_changed)
         dialog.exec()
@@ -593,6 +608,7 @@ class MainWindow(QMainWindow):
         self.settings = settings
         apply_theme(QApplication.instance(), settings.theme, settings.font_scale)
         self.update_root_label()
+        self.refresh()
 
     def load_jobs(self):
         jobs = self.library.jobs()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from mutagen.mp3 import MP3
 
-from .database import Library, normalized, path_key
+from .database import Library, encode, normalized, path_key
 
 VERSION_PATTERN = re.compile(r"\b(live|remix|instrumental|acoustic|remaster(?:ed)?|karaoke)\b", re.I)
 
@@ -71,7 +72,7 @@ class ScanControl:
             raise InterruptedError("스캔을 취소했습니다.")
 
 
-def scan_library(library: Library, root: Path, recursive=True, control=None, progress=None) -> dict:
+def scan_library(library: Library, root: Path, recursive=True, control=None, progress=None, *, exclude=(), resume_job=None) -> dict:
     root = root.resolve()
     if not root.is_dir():
         library.mark_root_unavailable(root)
@@ -81,30 +82,69 @@ def scan_library(library: Library, root: Path, recursive=True, control=None, pro
     library.bind_root(root)
     control = control or ScanControl()
     progress = progress or (lambda count, failed: None)
-    job_id = library.start_job()
+    excluded = []
+    for relative in exclude:
+        path = root / relative
+        if Path(relative).is_absolute() or not path.resolve().is_relative_to(root) or path.resolve() == root:
+            raise ValueError('제외 폴더는 음악 루트 아래의 상대 경로로 입력하세요.')
+        excluded.append(path_key(path))
+    config = dict(root=str(root), recursive=recursive, exclude=list(exclude))
+    if resume_job:
+        with library.connection(write=True) as db:
+            job = db.execute("SELECT state FROM jobs WHERE id=? AND kind='scan'", (resume_job,)).fetchone()
+            saved = db.execute('SELECT value FROM metadata WHERE key=?', ('scan:' + resume_job,)).fetchone()
+            if not job or job[0] not in {'cancelled', 'failed', 'interrupted'} or not saved or json.loads(saved[0]) != config:
+                raise ValueError('스캔 루트·범위가 바뀌었거나 재개할 작업이 아닙니다. 새 스캔을 시작하세요.')
+            db.execute("UPDATE jobs SET state='running',processed=0,failed=0,ended_at=NULL WHERE id=?", (resume_job,))
+        job_id = resume_job
+    else:
+        job_id = library.start_job()
+        with library.connection(write=True) as db:
+            db.execute('INSERT INTO metadata(key,value) VALUES (?,?)', ('scan:' + job_id, encode(config)))
     failed_directories: list[str] = []
     count = failed = 0
+    seen = set()
+
+    def read_current(path):
+        # A checkpoint reuses metadata only after full content revalidation.
+        with library.connection() as db:
+            old = db.execute('SELECT payload FROM observations WHERE job_id=? AND path_key=?', (job_id, path_key(path))).fetchone() if resume_job else None
+        cached = json.loads(old[0]) if old and old[0] else None
+        if cached:
+            before = path.stat()
+            if (before.st_size, before.st_mtime_ns) == (cached['size'], cached['mtime_ns']):
+                hasher = hashlib.sha256()
+                with path.open('rb') as stream:
+                    while block := stream.read(1024 * 1024):
+                        control.checkpoint()
+                        hasher.update(block)
+                after = path.stat()
+                if hasher.hexdigest() == cached['hash'] and (before.st_size, before.st_mtime_ns, before.st_ino) == (after.st_size, after.st_mtime_ns, after.st_ino):
+                    return cached
+        return read_snapshot(path, control.cancelled)
 
     def walk_error(error):
         nonlocal failed
         bad = Path(error.filename or root)
         failed_directories.append(path_key(bad))
         library.observe(job_id, bad, None, "폴더 접근 실패")
+        seen.add(path_key(bad))
         failed += 1
 
     try:
         for directory, subdirs, names in os.walk(root, followlinks=False, onerror=walk_error):
             control.checkpoint()
             subdirs[:] = sorted(name for name in subdirs if not (Path(directory) / name).is_symlink()
-                                and not (Path(directory) / name).is_junction()) if recursive else []
+                                and not (Path(directory) / name).is_junction() and path_key(Path(directory) / name) not in excluded) if recursive else []
             for name in sorted(names):
                 path = Path(directory) / name
                 if path.suffix.casefold() != ".mp3" or path.is_symlink():
                     continue
                 control.checkpoint()
+                seen.add(path_key(path))
                 try:
                     path.resolve().relative_to(root)
-                    snapshot = read_snapshot(path, control.cancelled)
+                    snapshot = read_current(path)
                     library.observe(job_id, path, snapshot)
                     count += 1
                 except InterruptedError:
@@ -116,7 +156,11 @@ def scan_library(library: Library, root: Path, recursive=True, control=None, pro
                 if (count + failed) % 10 == 0:
                     progress(count, failed)
         control.checkpoint()
-        result = library.finish_scan(job_id, root, recursive, failed_directories)
+        if resume_job:
+            with library.connection(write=True) as db:
+                obsolete = [row[0] for row in db.execute('SELECT path_key FROM observations WHERE job_id=?', (job_id,)) if row[0] not in seen]
+                db.executemany('DELETE FROM observations WHERE job_id=? AND path_key=?', ((job_id, key) for key in obsolete))
+        result = library.finish_scan(job_id, root, recursive, failed_directories, excluded)
         progress(count, failed)
         return dict(job_id=job_id, processed=count, failed=failed, **result)
     except InterruptedError:

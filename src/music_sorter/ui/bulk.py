@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QGridLayout, QHBox
                               QTableView, QTabWidget, QVBoxLayout, QWidget)
 
 from ..classification import AXES, LABELS, TAXONOMY
+from ..catalog import active_catalog
 from .review_worker import ReviewWorker
 
 STATES = dict(eligible="저장 가능", blocked="보류", unchanged="변경 없음", applied="저장됨", stale="변경되어 제외", cancelled="취소")
@@ -53,7 +54,7 @@ class BulkModel(QAbstractTableModel):
 
 
 class BulkDialog(QDialog):
-    def __init__(self, library, filters, selected_ids, parent=None):
+    def __init__(self, library, filters, selected_ids, parent=None, job_id=None):
         super().__init__(parent)
         self.library, self.filters, self.selected_ids = library, dict(filters), list(selected_ids)
         self.worker = None
@@ -101,7 +102,8 @@ class BulkDialog(QDialog):
             else:
                 value = QListWidget()
                 value.setMaximumHeight(96)
-                options = list(dict.fromkeys(tag for tags in TAXONOMY["major"].values() for tag in tags)) if axis == "subgenre" else TAXONOMY[axis]
+                catalog = active_catalog()
+                options = list(dict.fromkeys(tag for tags in catalog['major'].values() for tag in tags)) if axis == 'subgenre' else catalog[axis]
                 for name in options:
                     item = QListWidgetItem(name)
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -160,6 +162,13 @@ class BulkDialog(QDialog):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.scope.currentIndexChanged.connect(self.invalidate)
+        if job_id:
+            self.preview = self.library.bulk_summary(job_id)
+            self.form.setEnabled(False)
+            self.preview_button.setEnabled(False)
+            self.apply_button.setEnabled(self.preview['state'] == 'prepared' and bool(self.preview['eligible']))
+            self.tabs.setCurrentIndex(1)
+            self.status.setText('저장된 대상·변경 차이입니다. 적용 전 현재 버전을 다시 확인합니다. 중단·완료 작업은 새 미리보기가 필요합니다.')
         self.load_page()
 
     def invalidate(self, *_):

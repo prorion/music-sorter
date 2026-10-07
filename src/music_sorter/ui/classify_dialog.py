@@ -59,6 +59,9 @@ class ClassifyDialog(QDialog):
         self.previous.clicked.connect(lambda: self.turn_page(-1))
         self.next.clicked.connect(lambda: self.turn_page(1))
         pages.addWidget(self.previous)
+        self.abandon_button = QPushButton('미제출 계획 취소')
+        self.abandon_button.clicked.connect(self.abandon)
+        pages.addWidget(self.abandon_button)
         pages.addStretch()
         pages.addWidget(self.next)
         layout.addLayout(pages)
@@ -92,6 +95,12 @@ class ClassifyDialog(QDialog):
             combo.currentIndexChanged.connect(self.invalidate)
         self.lyrics.toggled.connect(self.invalidate)
         self.model_changed()
+        defaults = CredentialStore.profile_defaults
+        if not job_id:
+            if defaults.get('budget'):
+                self.budget.setText(defaults['budget'])
+            if defaults.get('execution'):
+                self.execution.setCurrentIndex(self.execution.findData(defaults['execution']))
         if job_id:
             options = self.engine.job(job_id)['options']
             self.purpose.blockSignals(True)
@@ -108,6 +117,8 @@ class ClassifyDialog(QDialog):
     def model_changed(self):
         escalate = self.purpose.currentData() == 'escalate'
         self.lyrics.setEnabled(escalate)
+        if not self.job_id:
+            self.lyrics.setChecked(escalate and CredentialStore.profile_defaults.get('include_lyrics', self.settings.include_lyrics_default))
         self.model_label.setText(f"{self.settings.escalate_provider if escalate else self.settings.classify_provider} · "
                                  f"{self.settings.escalate_model if escalate else self.settings.classify_model}")
 
@@ -136,6 +147,9 @@ class ClassifyDialog(QDialog):
                        budget=self.budget.text(), purpose=self.purpose.currentData(), execution=self.execution.currentData(),
                        workspace=self.settings.anthropic_workspace_id,
                        include_lyrics=escalate and self.lyrics.isChecked())
+        options.update(tracks_per_request=self.settings.llm_tracks_per_request,
+                       max_output_tokens_per_track=self.settings.llm_max_output_tokens_per_track,
+                       timeout_seconds=self.settings.llm_timeout_seconds, max_retries=self.settings.llm_max_retries)
         from ..external import ExternalLookup
         options['external'] = ExternalLookup(self.library, self.settings).evidence
         self.start(lambda control, progress: self.engine.prepare(ids, **options, control=control, progress=progress), self.prepared)
@@ -167,7 +181,7 @@ class ClassifyDialog(QDialog):
     def with_client(self, action, control, progress):
         job = self.engine.job(self.job_id)
         provider = job['options']['provider']
-        client = ProviderClient(provider, CredentialStore().get(provider), job['options'].get('workspace', ''))
+        client = ProviderClient(provider, CredentialStore().get(provider), job['options'].get('workspace', ''), timeout=job['options'].get('timeout_seconds', 60))
         try:
             return action(self.job_id, client, control=control, progress=progress)
         finally:
@@ -206,13 +220,14 @@ class ClassifyDialog(QDialog):
     def retry(self):
         if self.job_id and not self.worker:
             count = self.engine.retry_failed(self.job_id)
-            self.status.setText(f'확인된 실패 {count}곡을 재시도 준비했습니다. 총 4회 한도·예산을 유지합니다. 유료 제출 버튼으로 실행하세요.')
+            maximum = self.engine.job(self.job_id)['options'].get('max_retries', 3) + 1
+            self.status.setText(f'확인된 실패 {count}곡을 재시도 준비했습니다. 총 {maximum}회 한도·예산을 유지합니다. 유료 제출 버튼으로 실행하세요.')
             self.load()
 
     def load(self):
         self.rows = self.engine.rows(self.job_id, limit=200, offset=self.offset) if self.job_id else []
         self.table.setRowCount(len(self.rows))
-        states = dict(prepared='미제출', sending='전송 중', unknown='처리 확인 필요', received='응답 수신', remote='원격 처리', completed='완료', failed='실패', proposal='검토 제안')
+        states = dict(prepared='미제출', blocked='제출 보류', cancelled='계획 취소', sending='전송 중', unknown='처리 확인 필요', received='응답 수신', remote='원격 처리', completed='완료', failed='실패', proposal='검토 제안')
         for i, row in enumerate(self.rows):
             inputs = json.loads(row['input'])
             for j, value in enumerate((inputs['title'] + ' · ' + inputs['artist'], states.get(row['state'], row['state']), row['reason'], '두 번 클릭 · 입력 JSON/가사/근거')):
@@ -232,7 +247,9 @@ class ClassifyDialog(QDialog):
             self.retry_button.setEnabled(bool(summary['counts'].get('failed')) and not self.worker)
             self.previous.setEnabled(self.offset > 0)
             self.next.setEnabled(self.offset + len(self.rows) < sum(summary['counts'].values()))
+            self.abandon_button.setEnabled(bool(summary['counts'].get('prepared')) and not self.worker)
         else:
+            self.abandon_button.setEnabled(False)
             for button in self.conditional_buttons:
                 button.setEnabled(False)
             self.previous.setEnabled(False)
@@ -259,6 +276,12 @@ class ClassifyDialog(QDialog):
         close.clicked.connect(dialog.accept)
         layout.addWidget(close)
         dialog.exec()
+
+    def abandon(self):
+        if self.job_id and not self.worker:
+            count = self.engine.cancel_prepared(self.job_id)
+            self.status.setText(f'미제출 {count}곡 계획을 취소했습니다. 새 계획을 만들 수 있으며 기존 원격 요청·비용 예약은 유지합니다.')
+            self.load()
 
     def turn_page(self, delta):
         self.offset = max(0, self.offset + delta * 200)

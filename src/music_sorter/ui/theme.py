@@ -59,7 +59,7 @@ def apply_theme(app, theme: str, font_scale: float):
         QListWidget::item {{ padding: 5px 8px; border-radius: 6px; }}
         QListWidget::item:selected {{ background: {selected}; color: {text}; }}
         QListWidget#navigation {{ background: transparent; border: none; outline: none; padding: 0; }}
-        QListWidget#navigation::item {{ padding: 14px 12px; margin: 3px 0; border-radius: 9px; }}
+        QListWidget#navigation::item {{ padding: 12px 12px; margin: 2px 0; border-radius: 9px; }}
         QListWidget#navigation::item:selected {{ background: {soft}; color: {accent}; font-weight: 600; }}
         QListWidget#navigation::item:hover {{ background: {raised}; }}
         QScrollArea#detailScroll, QScrollArea#settingsScroll {{ border: none; background: transparent; }}

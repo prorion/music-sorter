@@ -29,7 +29,7 @@ def main():
     apply_theme(app, "light", 1)
     window = MainWindow(library, settings, args.data_dir / "settings.json")
     window.show()
-    report = {"device_pixel_ratio": window.devicePixelRatioF(), "screens": []}
+    report = {"device_pixel_ratio": window.devicePixelRatioF(), "screens": [], 'geometry': {}}
 
     def capture():
         for theme in ("light", "dark"):
@@ -40,11 +40,16 @@ def main():
                 name = f"library-{theme}-{label}.png"
                 assert window.grab().save(str(args.output / name))
                 report["screens"].append(name)
+                report['geometry'][name] = dict(width=window.width(), height=window.height(), dpr=window.devicePixelRatioF())
         dialog = SettingsDialog(settings, args.data_dir / "settings.json", library, window)
         dialog.menu.setCurrentRow(2)
         dialog.show()
         app.processEvents()
         dialog.grab().save(str(args.output / "settings-api.png"))
+        for menu, name in [(1, 'library'), (3, 'classification'), (6, 'data')]:
+            dialog.menu.setCurrentRow(menu)
+            app.processEvents()
+            dialog.grab().save(str(args.output / f'settings-{name}.png'))
         dialog.close()
         duplicates = DuplicateDialog(library, settings.duplicate_tolerance_seconds, window)
         duplicates.show()
@@ -77,6 +82,19 @@ def main():
             app.processEvents()
             external.grab().save(str(args.output / 'external-information.png'))
             external.close()
+            from music_sorter.ui.catalog_dialog import CatalogDialog
+            catalog = CatalogDialog(library, window)
+            catalog.show()
+            app.processEvents()
+            catalog.grab().save(str(args.output / 'taxonomy.png'))
+            catalog.close()
+            if window.model.rows:
+                from music_sorter.ui.history_dialog import HistoryDialog
+                history = HistoryDialog(library, window.model.rows[0]['id'], window)
+                history.show()
+                app.processEvents()
+                history.grab().save(str(args.output / 'classification-history.png'))
+                history.close()
             pending, _ = library.list_tracks(state="link_pending", limit=1)
             if pending:
                 links = LinkDialog(library, pending[0]["id"], window)

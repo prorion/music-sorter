@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QListW
                               QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from ..classification import AXES, LABELS, TAXONOMY
+from ..catalog import options as catalog_options
 
 
 class Choices(QWidget):
@@ -116,6 +117,9 @@ class TrackEditor(QWidget):
         self.review_button = QPushButton("외부 변경 검토")
         self.review_button.clicked.connect(lambda: self.external_review.emit(self.current["id"]) if self.current else None)
         layout.addWidget(self.review_button)
+        self.history_button = QPushButton('분류 판정 이력·되돌리기')
+        self.history_button.clicked.connect(self.open_history)
+        layout.addWidget(self.history_button)
         layout.addStretch()
         self.fields["major"].currentIndexChanged.connect(self.major_changed)
         self.loading = False
@@ -129,7 +133,7 @@ class TrackEditor(QWidget):
         if self.loading:
             return
         major = self.fields["major"].currentData()
-        options = TAXONOMY["major"].get(major, [])
+        options = catalog_options('subgenre', major)
         previous = self.fields["subgenre"].value()
         incompatible = previous is not None and any(value not in options for value in previous)
         self.loading = True
@@ -155,7 +159,7 @@ class TrackEditor(QWidget):
             if isinstance(field, QComboBox):
                 field.setCurrentIndex(max(0, field.findData(data["value"])))
             else:
-                options = TAXONOMY["major"].get(major, []) if axis == "subgenre" else TAXONOMY[axis]
+                options = catalog_options(axis, major, data['value'])
                 field.populate(options, data["value"], axis == "concept")
             self.edits[axis].setChecked(False)
             status = {"unclassified": "미분류", "unresolved": "미확정", "confirmed": "확정"}[data["status"]]
@@ -169,6 +173,19 @@ class TrackEditor(QWidget):
 
     def dirty(self):
         return any(edit.isChecked() for edit in self.edits.values())
+
+    def open_history(self):
+        if not self.current:
+            return
+        if self.dirty():
+            QMessageBox.information(self, '수정 중', '미저장 수정을 먼저 저장하거나 취소하세요.')
+            return
+        from .history_dialog import HistoryDialog
+        dialog = HistoryDialog(self.library, self.current['id'], self)
+        dialog.exec()
+        if getattr(dialog, 'changed', False):
+            self.load_track(self.library.track(self.current['id']))
+            self.saved.emit()
 
     def save(self):
         if not self.current or not self.dirty():

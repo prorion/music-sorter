@@ -30,9 +30,11 @@ def _object(properties):
 
 
 def response_schema():
+    from .catalog import active_catalog
+    taxonomy = active_catalog()
     fields = {}
     for axis in AXES:
-        options = list(dict.fromkeys(tag for group in TAXONOMY['major'].values() for tag in group)) if axis == 'subgenre' else list(TAXONOMY[axis])
+        options = list(dict.fromkeys(tag for group in taxonomy['major'].values() for tag in group)) if axis == 'subgenre' else list(taxonomy[axis])
         value = {'type': ['string', 'null'], 'enum': options + [None]} if axis in {'major', 'vocal'} else {
             'type': ['array', 'null'], 'items': {'type': 'string', 'enum': options}}
         fields[axis] = _object(dict(value=value, status={'type': 'string', 'enum': ['confirmed', 'unresolved']},
@@ -80,7 +82,7 @@ def cache_key(provider, model, inputs, phase):
                                  'prompt': SYSTEM, 'version': PROMPT_VERSION, 'taxonomy': TAXONOMY}).encode('utf-8')).hexdigest()
 
 
-def parse_tracks(text, expected_ids):
+def parse_tracks(text, expected_ids, taxonomy=None):
     if not isinstance(text, str) or len(text.encode('utf-8')) > 2 * 1024 * 1024:
         raise ValueError('모델 응답 크기·형식을 확인할 수 없습니다.')
     try:
@@ -112,7 +114,7 @@ def parse_tracks(text, expected_ids):
                     raise ValueError('근거 형식 오류')
                 classification[axis].update(value=field['value'], status=field['status'], confidence=confidence,
                                             reason=_text(field['reason'], 600), source='llm')
-            validate(classification)
+            validate(classification, taxonomy)
             suggested = row.get('suggested_tags', [])
             if not isinstance(suggested, list) or len(suggested) > 20 or any(not isinstance(tag, str) or len(tag) > 100 for tag in suggested):
                 raise ValueError('제안 태그 오류')
@@ -161,7 +163,7 @@ class ProviderError(Exception):
 
 
 class ProviderClient:
-    def __init__(self, provider, api_key, workspace='', client=None):
+    def __init__(self, provider, api_key, workspace='', client=None, timeout=60):
         if provider not in {'openai', 'anthropic'}:
             raise ValueError('지원하지 않는 API 서비스입니다.')
         if not isinstance(workspace, str) or any(ord(char) < 33 or ord(char) > 126 for char in workspace):
@@ -173,15 +175,15 @@ class ProviderClient:
         if not isinstance(api_key, str) or not api_key.strip() or any(ord(char) < 33 or ord(char) > 126 for char in api_key):
             raise ProviderError('auth')
         import httpx2
-        http_client = httpx2.Client(follow_redirects=False, trust_env=False, timeout=60)
+        http_client = httpx2.Client(follow_redirects=False, trust_env=False, timeout=timeout)
         if provider == 'anthropic':
             import anthropic
             self.client = anthropic.Anthropic(api_key=api_key, base_url='https://api.anthropic.com', max_retries=0,
-                                              timeout=60, http_client=http_client,
+                                              timeout=timeout, http_client=http_client,
                                               default_headers={'anthropic-workspace-id': workspace} if workspace else {})
         elif provider == 'openai':
             import openai
-            self.client = openai.OpenAI(api_key=api_key, base_url='https://api.openai.com/v1', max_retries=0, timeout=60, http_client=http_client)
+            self.client = openai.OpenAI(api_key=api_key, base_url='https://api.openai.com/v1', max_retries=0, timeout=timeout, http_client=http_client)
         else:
             raise ValueError('지원하지 않는 API 서비스입니다.')
 
@@ -189,13 +191,16 @@ class ProviderClient:
         self.client.close()
 
     def body(self, model, inputs, max_tokens):
+        contract = getattr(self, 'contract', None) or {}
+        system, taxonomy, schema = contract.get('system', SYSTEM), contract.get('taxonomy', TAXONOMY), contract.get('schema', response_schema())
+        payload = encode({'taxonomy': taxonomy, 'tracks': inputs})
         if self.provider == 'anthropic':
-            return dict(model=model, max_tokens=max_tokens, system=SYSTEM,
-                        messages=[{'role': 'user', 'content': request_input(inputs)}],
-                        output_config={'format': {'type': 'json_schema', 'schema': response_schema()}})
-        return dict(model=model, max_output_tokens=max_tokens, store=False, instructions=SYSTEM,
-                    input=request_input(inputs), text={'format': {'type': 'json_schema', 'name': 'music_classification',
-                                                                  'strict': True, 'schema': response_schema()}})
+            return dict(model=model, max_tokens=max_tokens, system=system,
+                        messages=[{'role': 'user', 'content': payload}],
+                        output_config={'format': {'type': 'json_schema', 'schema': schema}})
+        return dict(model=model, max_output_tokens=max_tokens, store=False, instructions=system,
+                    input=payload, text={'format': {'type': 'json_schema', 'name': 'music_classification',
+                                                                  'strict': True, 'schema': schema}})
 
     @staticmethod
     def _translate(error):
@@ -232,7 +237,8 @@ class ProviderClient:
             count = response.input_tokens
             if isinstance(count, bool) or not isinstance(count, int) or count < 0:
                 raise ProviderError('invalid')
-            return max(count + 1024, input_bound(inputs))
+            serialized = encode(self.body(model, inputs, 1024)).encode('utf-8')
+            return max(count + 1024, len(serialized) + 4096)
         except ProviderError:
             raise
         except Exception as error:

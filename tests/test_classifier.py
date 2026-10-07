@@ -55,6 +55,41 @@ def test_budget_blocks_before_paid_request(library, root, song, fake_reader):
     assert client.calls == 1
 
 
+def test_file_change_before_submission_sends_nothing(library, root, song, fake_reader):
+    engine, job, ids = prepared(library, root, song, fake_reader)
+    song.write_bytes(b'changed-after-preparation')
+    client = Client()
+    result = engine.run(job, client)
+    assert client.calls == 0 and result['counts'] == {'blocked': 1}
+    assert result['actual'] == result['reserved'] == 0
+
+
+def test_abandoned_plan_releases_track_for_new_model_plan(library, root, song, fake_reader):
+    engine, job, ids = prepared(library, root, song, fake_reader)
+    assert engine.cancel_prepared(job) == 1
+    new = engine.prepare(ids, provider='anthropic', model='claude-sonnet-5-5', budget=1)
+    assert engine.summary(new)['counts'] == {'prepared': 1}
+    assert engine.summary(job)['actual'] == engine.summary(job)['reserved'] == 0
+
+
+def test_custom_output_limit_is_reserved_and_retry_limit_is_frozen(library, root, song, fake_reader):
+    scan_library(library, root)
+    engine = Classifier(library)
+    ids = [row['id'] for row in library.list_tracks()[0]]
+    job = engine.prepare(ids, provider='anthropic', model='claude-haiku-4-5', budget='1',
+                         tracks_per_request=1, max_output_tokens_per_track=2000, max_retries=0, timeout_seconds=30)
+    reservations = []
+    def limited(*_):
+        reservations.append(engine.summary(job)['reserved'])
+        return 'retryable'
+    client = Client(limited)
+    engine.run(job, client)
+    assert client.calls == 1 and engine.retry_failed(job) == 0
+    assert engine.job(job)['options']['max_tokens_per_track'] == 2000
+    assert engine.job(job)['options']['timeout_seconds'] == 30
+    assert reservations[0] >= 10000
+
+
 def test_unknown_holds_reservation_and_prevents_second_job(library, root, song, fake_reader):
     engine, job, ids = prepared(library, root, song, fake_reader)
     client = Client(lambda *_: 'unknown')

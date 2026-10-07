@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                               QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                              QMessageBox, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+                              QMessageBox, QPushButton, QPlainTextEdit, QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..database import Library, now
 from ..settings import CredentialStore, Settings
@@ -20,6 +20,7 @@ class SettingsDialog(QDialog):
         self.settings, self.config_path, self.library = settings, config_path, library
         self.vault = CredentialStore()
         self.connection_worker = None
+        self.data_worker = None
         self.model_lists = {}
         self.setWindowTitle("설정 · music-sorter")
         self.resize(850, 640)
@@ -65,16 +66,22 @@ class SettingsDialog(QDialog):
         self.recursive = QCheckBox("하위 폴더 포함")
         self.recursive.setChecked(settings.include_subfolders)
         music.addRow(self.recursive)
+        self.exclusions = QPlainTextEdit('\n'.join(settings.scan_exclude_folders))
+        self.exclusions.setPlaceholderText('음악 루트 아래 상대 폴더 · 한 줄에 하나 · 예: 개인 녹음')
+        self.exclusions.setMaximumHeight(90)
+        music.addRow('스캔 제외 폴더', self.exclusions)
         self.tolerance = QDoubleSpinBox()
         self.tolerance.setRange(0, 30)
         self.tolerance.setValue(settings.duplicate_tolerance_seconds)
         self.tolerance.setSuffix(" 초")
         music.addRow("중복 길이 허용값", self.tolerance)
-        music.addRow(self.note("전체 파일 SHA-256 검증 · 정션/심볼릭 링크 제외\n등록 후 음악 루트 교체·DB 이관은 후속 기능입니다."))
+        music.addRow(self.note("전체 파일 SHA-256 검증 · 정션/심볼릭 링크 제외\n데이터·복구 메뉴에서 DB를 새 위치로 이관할 수 있습니다."))
         music.addRow(self.note(f"DB: {library.path}"))
 
         api = self.page("LLM / API 연결")
         api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n연결 확인은 모델 목록만 조회합니다. 음악 전송·분류 요청은 하지 않습니다."))
+        if CredentialStore.profile_keys is not None:
+            api.addRow(self.note('명시적 개발 프로필/프로세스 환경 변수의 세션 키를 사용 중입니다.\n자격 증명 저장소의 키는 섞지 않습니다. 키 등록·삭제는 기본 모드에서 진행하세요.'))
         self.key_edits = {}
         self.key_states = {}
         self.connection_buttons = {}
@@ -102,6 +109,9 @@ class SettingsDialog(QDialog):
                 actions.addWidget(widget)
             api.addRow(controls)
             self.key_buttons[provider] = (save, delete)
+            if CredentialStore.profile_keys is not None:
+                save.setEnabled(False)
+                delete.setEnabled(False)
             if provider in {"openai", "anthropic"}:
                 connect = QPushButton("연결 확인 / 모델 조회")
                 connect.clicked.connect(lambda _, p=provider: self.check_connection(p))
@@ -138,6 +148,23 @@ class SettingsDialog(QDialog):
             combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
         classification.addRow(self.note("API 연결 메뉴에서 조회한 모델을 목록에서 선택하거나 ID를 직접 입력하세요.\n목록 조회 성공은 선택 모델의 분류·구조화 출력·Batch·잔액 확인을 뜻하지 않습니다."))
         classification.addRow(self.note("라이브러리의 분류 실행에서 대상·목적·동기/Batch·작업별 USD 예산을 선택합니다.\n가사는 기본 제외하며 미확정 재판정에서만 입력 내용을 확인한 뒤 선택합니다.\n모델 신뢰도는 정답 확률이 아닙니다. 내장 확인 단가가 없는 모델은 제출을 보류합니다."))
+        catalog = QPushButton('분류 태그 목록·제안 승인')
+        catalog.clicked.connect(self.open_catalog)
+        classification.addRow(catalog)
+        self.advanced = {}
+        for title, name, low, high in [('요청 한 묶음의 곡 수', 'llm_tracks_per_request', 1, 20),
+                                       ('곡당 최대 출력 토큰', 'llm_max_output_tokens_per_track', 256, 2000),
+                                       ('생성 요청 제한 시간 (초)', 'llm_timeout_seconds', 10, 180),
+                                       ('처리 전 제한 오류의 추가 재시도', 'llm_max_retries', 0, 3)]:
+            control = QSpinBox()
+            control.setRange(low, high)
+            control.setValue(getattr(settings, name))
+            self.advanced[name] = control
+            classification.addRow(title, control)
+        self.lyrics_default = QCheckBox('미확정 재판정에서 기존 ID3 가사 사용을 기본 선택')
+        self.lyrics_default.setChecked(settings.include_lyrics_default)
+        classification.addRow(self.lyrics_default)
+        classification.addRow(self.note('요청 동시성은 1입니다. 시간 초과·서버 오류·처리 불확실은 자동 재전송하지 않습니다.\n출력 제한이 낮으면 결과가 잘려 검증에 실패할 수 있습니다. 변경은 새 작업부터 적용합니다.'))
 
         external = self.page("외부 음악 정보")
         self.musicbrainz_enabled = QCheckBox('MusicBrainz 정보 조회')
@@ -162,7 +189,22 @@ class SettingsDialog(QDialog):
         backup = QPushButton("검증된 DB 백업 만들기")
         backup.clicked.connect(self.backup)
         data.addRow(backup)
-        data.addRow(self.note("음악 파일 복구: 작업 이력의 파일 정리 항목을 두 번 클릭하고 되돌리기를 선택하세요.\nDB 전체 복원·데이터 위치 이관은 후속 단계에서 제공합니다."))
+        self.data_buttons = []
+        for title, action in (('DB 사본 검증·복원', self.restore_database), ('데이터 이관 사본 만들기', self.migrate_data),
+                              ('검증된 이관 위치를 다음 실행부터 사용', self.activate_data),
+                              ('비밀값·개인정보 제외 설정 내보내기', self.export_preferences), ('.env의 설정·키 가져오기', self.import_profile)):
+            button = QPushButton(title)
+            button.clicked.connect(action)
+            data.addRow(button)
+            self.data_buttons.append(button)
+        if CredentialStore.profile_keys is not None:
+            self.data_buttons[-1].setEnabled(False)
+        self.data_status = self.note('음악 파일 복구는 작업 이력의 파일 정리 항목을 두 번 클릭해 진행합니다.\nDB 복원은 음악 파일을 바꾸지 않으며 복원 후 재스캔이 필요합니다. 이관은 기존 위치를 보존합니다.')
+        data.addRow(self.data_status)
+        with library.connection() as db:
+            cache = db.execute('SELECT count(*) FROM external_cache').fetchone()[0]
+            responses = db.execute('SELECT count(*) FROM llm_cache').fetchone()[0]
+        data.addRow(self.note(f'외부 조회 캐시 {cache:,}건 · 분류 결과 캐시 {responses:,}건\n작업 결과와 오류는 작업 이력에서 확인할 수 있습니다. 키·API 오류 원문은 이력에 저장하지 않습니다.'))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Ok)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         buttons.button(QDialogButtonBox.StandardButton.Apply).setText("적용")
@@ -199,6 +241,12 @@ class SettingsDialog(QDialog):
         if selected:
             self.root.setText(selected)
 
+    def open_catalog(self):
+        if self.connection_busy():
+            return
+        from .catalog_dialog import CatalogDialog
+        CatalogDialog(self.library, self).exec()
+
     def refresh_key(self, provider):
         try:
             registered = bool(self.vault.get(provider))
@@ -232,7 +280,7 @@ class SettingsDialog(QDialog):
         combo.blockSignals(False)
 
     def connection_busy(self):
-        return self.connection_worker is not None
+        return self.connection_worker is not None or self.data_worker is not None
 
     def check_connection(self, provider):
         if self.connection_busy():
@@ -305,12 +353,14 @@ class SettingsDialog(QDialog):
     def draft(self):
         return replace(self.settings, music_root=self.root.text(), theme=self.theme.currentData(),
                           font_scale=self.scale.value(), include_subfolders=self.recursive.isChecked(),
+                          scan_exclude_folders=list(dict.fromkeys(line.strip() for line in self.exclusions.toPlainText().splitlines() if line.strip())),
                           notify_on_completion=self.notify.isChecked(), duplicate_tolerance_seconds=self.tolerance.value(),
                           classify_provider=self.providers[0].currentData(), classify_model=self.models[0].currentText().strip(),
                           escalate_provider=self.providers[1].currentData(), escalate_model=self.models[1].currentText().strip(),
                           anthropic_workspace_id=self.workspace.text().strip(),
                           musicbrainz_enabled=self.musicbrainz_enabled.isChecked(), musicbrainz_contact=self.musicbrainz_contact.text().strip(),
-                          lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value())
+                          lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value(),
+                          include_lyrics_default=self.lyrics_default.isChecked(), **{name: control.value() for name, control in self.advanced.items()})
 
     def done(self, result):
         if self.connection_busy():
@@ -334,6 +384,8 @@ class SettingsDialog(QDialog):
         super().reject()
 
     def save(self) -> bool:
+        if self.connection_busy():
+            return False
         updated = self.draft()
         try:
             if updated.music_root:
@@ -350,9 +402,123 @@ class SettingsDialog(QDialog):
             return False
 
     def backup(self):
+        if self.connection_busy():
+            return
         name = now().replace(":", "-").replace("+", "_") + ".sqlite3"
         try:
             self.library.backup(self.config_path.parent / "backups" / name)
             QMessageBox.information(self, "DB 백업 완료", "일관된 DB 사본의 무결성을 확인했습니다.")
         except Exception:
             QMessageBox.warning(self, "백업 보류", "백업 경로·공간·DB 상태를 확인하세요.")
+
+    def data_start(self, action, callback):
+        if self.connection_busy():
+            return
+        from .operations import OperationWorker
+        self.data_worker = OperationWorker(lambda *_: action(), self)
+        self.data_worker.result.connect(callback)
+        self.data_worker.error.connect(self.data_status.setText)
+        self.data_worker.finished.connect(self.data_finished)
+        for button in self.data_buttons:
+            button.setEnabled(False)
+        self.data_status.setText('데이터 무결성·복구 자료를 확인하고 있습니다. 완료 결과는 아래에 표시됩니다.')
+        self.data_worker.start()
+
+    def data_finished(self):
+        worker, self.data_worker = self.data_worker, None
+        worker.deleteLater()
+        for button in self.data_buttons:
+            button.setEnabled(True)
+        if CredentialStore.profile_keys is not None:
+            self.data_buttons[-1].setEnabled(False)
+
+    def restore_database(self):
+        if self.connection_busy():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, '복원할 DB 사본 선택', str(self.config_path.parent / 'backups'), 'SQLite (*.sqlite3 *.db)')
+        if not path:
+            return
+        from ..maintenance import prepare_restore
+        self.data_start(lambda: prepare_restore(self.library, Path(path)), self.restore_prepared)
+
+    def restore_prepared(self, plan):
+        # Ask after the preparation thread has fully released its resources.
+        from PySide6.QtCore import QTimer
+        def confirm():
+            report = plan['report']
+            text = f"검증한 DB: {report['tracks']:,}곡 · 스키마 {report['schema']}\n현재 DB는 별도 백업하고 교체합니다. 음악 파일은 그대로이며 복원 후 재스캔이 필요합니다.\n이 준비 사본으로 복원할까요?"
+            if QMessageBox.question(self, '검증된 DB 복원', text, defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                self.data_status.setText('복원 준비 사본을 보존했습니다. 현재 DB는 변경하지 않았습니다.')
+                return
+            from ..maintenance import apply_restore
+            def done(result):
+                self.data_status.setText(f"DB {result['tracks']:,}곡 복원 완료. 재스캔 전 파일 변경·분류 제출을 보류합니다. 이전 DB 백업을 보존했습니다.")
+                if hasattr(self.parent(), 'refresh'):
+                    self.parent().refresh()
+            self.data_start(lambda: apply_restore(self.library, plan), done)
+        QTimer.singleShot(0, confirm)
+
+    def migrate_data(self):
+        if self.connection_busy():
+            return
+        path = QFileDialog.getExistingDirectory(self, '이관 사본을 만들 비어 있는 로컬 폴더 선택')
+        if not path:
+            return
+        from ..maintenance import migrate_copy
+        def done(result):
+            self.data_status.setText(f"DB {result['report']['tracks']:,}곡 · 복구 자료 {result['rollback_files']:,}개를 검증해 복사했습니다.\n새 위치: {result['destination']}\n검증된 이관 위치 사용 버튼으로 다음 실행부터 이 위치를 선택할 수 있습니다.")
+        self.data_start(lambda: migrate_copy(self.library, self.settings, Path(path)), done)
+
+    def activate_data(self):
+        if self.connection_busy():
+            return
+        path = QFileDialog.getExistingDirectory(self, '검증한 이관 폴더 선택')
+        if not path:
+            return
+        if QMessageBox.question(self, '다음 실행 데이터 위치', f'다음 실행부터 다음 데이터 위치를 사용할까요?\n{path}\n기존 DB·복구 자료는 보존합니다. 현재 앱은 기존 위치를 사용합니다.',
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        from ..settings import activate_data_directory
+        self.data_start(lambda: activate_data_directory(path), lambda _: self.data_status.setText('검증한 데이터 위치를 저장했습니다. 앱을 닫고 다시 열면 새 위치를 사용합니다.'))
+
+    def export_preferences(self):
+        if self.connection_busy():
+            return
+        if self.connection_busy():
+            return
+        path, _ = QFileDialog.getSaveFileName(self, '개인정보 제외 설정 내보내기', 'music-sorter-settings.json', 'JSON (*.json)')
+        if path:
+            from ..maintenance import export_settings
+            try:
+                export_settings(self.draft(), Path(path))
+                self.data_status.setText('키·음악 경로·연락처·워크스페이스 식별자를 제외한 일반 설정을 내보냈습니다.')
+            except OSError:
+                self.data_status.setText('설정 출력 경로·파일 접근 상태를 확인하세요.')
+
+    def import_profile(self):
+        if self.connection_busy() or CredentialStore.profile_keys is not None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, '.env 설정·키 가져오기 (파일 값만 사용)', '', '환경 설정 (*.env);;모든 파일 (*)')
+        if not path:
+            return
+        from ..profiles import load_profile
+        try:
+            profile = load_profile(path, self.settings, environment={})
+            text = '등록할 키 종류: ' + (', '.join(profile.keys) or '없음') + '\n지원하지 않는 항목: ' + (', '.join(profile.ignored) or '없음') + '\n일반 설정은 로컬에, 키는 Windows 자격 증명 저장소에 가져옵니다. 원본 파일은 보존합니다. 진행할까요?'
+            if QMessageBox.question(self, '프로필 가져오기', text, defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+            if profile.settings.music_root:
+                if not Path(profile.settings.music_root).is_dir():
+                    raise ValueError('음악 루트 폴더를 찾을 수 없습니다.')
+                self.library.bind_root(Path(profile.settings.music_root))
+            for provider, key in profile.keys.items():
+                self.vault.set(provider, key)
+            profile.settings.save(self.config_path)
+            self.settings = profile.settings
+            self.settings_saved.emit(profile.settings)
+            QMessageBox.information(self, '가져오기 완료', '일반 설정·키를 저장했습니다. 이 설정 창을 다시 열어 확인하세요. 원본 .env는 보존했습니다.')
+            self.accept()
+        except Exception:
+            for provider in self.key_states:
+                self.refresh_key(provider)
+            QMessageBox.warning(self, '가져오기 보류', '프로필 형식·음악 루트·자격 증명 저장소를 확인하세요. 일부 키가 먼저 등록됐다면 유지되며 원본 프로필은 보존했습니다.')

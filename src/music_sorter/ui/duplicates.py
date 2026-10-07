@@ -39,7 +39,7 @@ class DuplicateDialog(QDialog):
             button.clicked.connect(callback)
             actions.addWidget(button)
         layout.addLayout(actions)
-        layout.addWidget(QLabel("여러 파일을 체크할 수 있습니다. 나머지 파일의 이동은 후속 적용 기능에서 미리보기 후 수행합니다."))
+        layout.addWidget(QLabel("여러 파일을 체크할 수 있습니다. 선택 결과의 이동은 파일 정리 미리보기에서 검토 후 적용합니다."))
         self.group_list.currentRowChanged.connect(self.show_group)
         self.reload()
 
