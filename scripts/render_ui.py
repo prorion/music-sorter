@@ -46,7 +46,7 @@ def main():
         dialog.show()
         app.processEvents()
         dialog.grab().save(str(args.output / "settings-api.png"))
-        for menu, name in [(1, 'library'), (3, 'classification'), (6, 'data')]:
+        for menu, name in [(1, 'library'), (3, 'classification'), (5, 'output'), (6, 'data')]:
             dialog.menu.setCurrentRow(menu)
             app.processEvents()
             dialog.grab().save(str(args.output / f'settings-{name}.png'))

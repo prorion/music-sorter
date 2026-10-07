@@ -20,7 +20,7 @@ class PlaylistDialog(QDialog):
         heading = QLabel('재생목록')
         heading.setObjectName('pageTitle')
         layout.addWidget(heading)
-        note = QLabel('장르·분위기·컨셉·CCM 및 검토 목록을 음악 폴더에 만듭니다.\nUTF-8 · CRLF · 상대 경로. 미확정·미해결 중복은 일반 목록에서 제외합니다.\n사용자가 만든 목록이나 수정한 목록은 보존하고 새 출력 이름을 사용합니다.')
+        note = QLabel(f'장르·분위기·컨셉·CCM 및 검토 목록을 음악 폴더에 만듭니다.\n.{settings.playlist_format} · UTF-8 · CRLF · 상대 경로. 미확정·미해결 중복은 일반 목록에서 제외합니다.\n사용자가 만든 목록이나 수정한 목록은 보존하고 새 출력 이름을 사용합니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
         self.name = QLineEdit()
@@ -97,7 +97,7 @@ class PlaylistDialog(QDialog):
                 return
             # Preserve other user-created combination definitions when adding/updating one.
             with self.library.connection() as db:
-                for row in db.execute('SELECT definition FROM playlist_outputs'):
+                for row in db.execute('SELECT definition FROM playlist_outputs ORDER BY updated_at,path'):
                     item = json.loads(row[0])
                     if item['name'].startswith('[조합] '):
                         custom.append({'name': item['name'][5:], 'filters': item['filters']})
@@ -105,9 +105,11 @@ class PlaylistDialog(QDialog):
             custom.append({'name': self.name.text().strip(), 'filters': filters})
         else:
             with self.library.connection() as db:
-                custom = [{'name': item['name'][5:], 'filters': item['filters']} for row in db.execute('SELECT definition FROM playlist_outputs')
+                custom = [{'name': item['name'][5:], 'filters': item['filters']} for row in db.execute('SELECT definition FROM playlist_outputs ORDER BY updated_at,path')
                           if (item := json.loads(row[0]))['name'].startswith('[조합] ')]
-        exporter = PlaylistExporter(self.library, Path(self.settings.music_root), self.settings.duplicate_tolerance_seconds)
+        custom = list({item['name']: item for item in custom}.values())
+        exporter = PlaylistExporter(self.library, Path(self.settings.music_root), self.settings.duplicate_tolerance_seconds,
+                                    file_format=self.settings.playlist_format)
         self.worker = OperationWorker(lambda control, progress: exporter.export(custom, control, progress), self)
         self.worker.result.connect(lambda result: self.status.setText(f'생성 {result["completed"]} · 보류 {result["blocked"]} · 제외 곡 {result.get("skipped", 0)}'))
         self.worker.error.connect(self.status.setText)

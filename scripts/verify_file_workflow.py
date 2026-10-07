@@ -58,7 +58,7 @@ def main():
         assert ID3(path).getall('TCON')[0].text == ['가요']
         checked += 1
     playlists = PlaylistExporter(library, root).export([{'name': '복사본 검증', 'filters': {'major': '가요', 'mood': '잔잔한'}}])
-    exported = (root / '[조합] 복사본 검증.m3u').read_bytes()
+    exported = (root / '[조합] 복사본 검증.m3u8').read_bytes()
     assert exported.count(b'\r\n') == total + 1
     assert str(root).encode('utf-8') not in exported
     for op in reversed(engine.operations(job)):

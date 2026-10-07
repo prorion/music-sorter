@@ -79,6 +79,7 @@ class Settings:
     musicbrainz_contact: str = ''
     lastfm_enabled: bool = True
     rollback_limit_gib: float = 10.0
+    playlist_format: str = 'm3u8'
     llm_tracks_per_request: int = 20
     llm_max_output_tokens_per_track: int = 1000
     llm_timeout_seconds: int = 60
@@ -106,6 +107,8 @@ class Settings:
             raise ValueError('제외 폴더는 음악 루트 아래의 상대 경로 목록으로 입력하세요.')
         if self.theme not in {"system", "light", "dark"}:
             raise ValueError("테마 값이 올바르지 않습니다.")
+        if not isinstance(self.playlist_format, str) or self.playlist_format not in {'m3u8', 'm3u'}:
+            raise ValueError('재생목록 형식은 m3u8 또는 m3u입니다.')
         if type(self.font_scale) not in (int, float) or not 0.8 <= self.font_scale <= 2:
             raise ValueError("글자 크기 범위를 확인하세요.")
         if type(self.duplicate_tolerance_seconds) not in (int, float) or not 0 <= self.duplicate_tolerance_seconds <= 30:

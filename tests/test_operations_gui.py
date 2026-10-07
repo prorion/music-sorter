@@ -33,7 +33,7 @@ def test_playlist_gui_generates_relative_review_list(qtbot, library, root, song,
     dialog.start()
     qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
     assert dialog.table.rowCount() == 2
-    assert song.name.encode('utf-8') in (root / '[검토] 미확정 곡.m3u').read_bytes()
+    assert song.name.encode('utf-8') in (root / '[검토] 미확정 곡.m3u8').read_bytes()
     assert dialog.generate.isEnabled()
 
 
@@ -47,6 +47,24 @@ def test_playlist_outputs_are_paged(qtbot, library, root):
     assert dialog.table.rowCount() == 200 and dialog.next.isEnabled()
     dialog.turn_page(1)
     assert dialog.table.rowCount() == 5 and not dialog.next.isEnabled() and dialog.previous.isEnabled()
+
+
+def test_playlist_gui_reuses_combination_once_across_formats(qtbot, library, root, song, fake_reader):
+    from music_sorter.playlists import PlaylistExporter
+    scan_library(library, root)
+    track = library.list_tracks()[0][0]
+    library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=['새벽']), track['revision'])
+    custom = [{'name': '새벽', 'filters': {'mood': '잔잔한'}}]
+    PlaylistExporter(library, root, file_format='m3u').export(custom)
+    PlaylistExporter(library, root).export(custom)
+    before = (root / '[조합] 새벽.m3u').read_bytes()
+    dialog = PlaylistDialog(library, Settings(music_root=str(root)))
+    qtbot.addWidget(dialog)
+    dialog.start()
+    qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
+    assert dialog.status.text().startswith('생성 ') and library.jobs()[0]['state'] == 'completed'
+    assert (root / '[조합] 새벽.m3u').read_bytes() == before
+    assert (root / '[조합] 새벽.m3u8').read_bytes().count(song.name.encode('utf-8')) == 1
 
 
 def test_external_cached_review_pages_cover_all_selected_tracks(qtbot, library, root, fake_reader):

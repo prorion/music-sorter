@@ -183,6 +183,12 @@ class SettingsDialog(QDialog):
         self.rollback_limit.setValue(settings.rollback_limit_gib)
         self.rollback_limit.setSuffix(' GiB')
         output.addRow('ID3 원본 복구 보관 한도', self.rollback_limit)
+        self.playlist_format = QComboBox()
+        self.playlist_format.addItem('UTF-8 M3U8 · PC 추천', 'm3u8')
+        self.playlist_format.addItem('UTF-8 M3U · 기존 앱용', 'm3u')
+        self.playlist_format.setCurrentIndex(self.playlist_format.findData(settings.playlist_format))
+        output.addRow('재생목록 형식', self.playlist_format)
+        output.addRow(self.note('곰오디오는 M3U8의 한글 경로·장르·재생을 확인했습니다.\nM3U는 곰오디오에서 한글 경로가 깨질 수 있습니다. 삼성 뮤직은 장치 검증 전입니다.\n형식 변경만으로 이전 목록을 지우거나 변경하지 않습니다. 다음 목록 생성부터 적용합니다.'))
         output.addRow(self.note("라이브러리의 파일 정리 미리보기에서 폴더·이름·장르 기록을 각각 선택합니다.\n실제 적용은 미리보기 확인 뒤 실행하며 작업 이력에서 되돌릴 수 있습니다.\n재생목록 메뉴에서 기본 목록과 조건 조합 목록을 생성합니다. UTF-8·CRLF·상대 경로를 사용합니다.\n복구 자료는 자동 삭제하지 않습니다. 자동 DB 백업은 하루 첫 적용 전 생성하고 최근 7개를 보관합니다."))
         data = self.page("데이터·복구")
         data.addRow(self.note(f"사용자 데이터: {config_path.parent}\n백업은 DB 사본이며 음악 파일을 포함하지 않습니다."))
@@ -360,6 +366,7 @@ class SettingsDialog(QDialog):
                           anthropic_workspace_id=self.workspace.text().strip(),
                           musicbrainz_enabled=self.musicbrainz_enabled.isChecked(), musicbrainz_contact=self.musicbrainz_contact.text().strip(),
                           lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value(),
+                          playlist_format=self.playlist_format.currentData(),
                           include_lyrics_default=self.lyrics_default.isChecked(), **{name: control.value() for name, control in self.advanced.items()})
 
     def done(self, result):

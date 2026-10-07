@@ -52,8 +52,11 @@ def matches(track, definition, policy):
 
 
 class PlaylistExporter:
-    def __init__(self, library, root: Path, tolerance=3.0):
+    def __init__(self, library, root: Path, tolerance=3.0, *, file_format='m3u8'):
+        if file_format not in {'m3u8', 'm3u'}:
+            raise ValueError('재생목록 출력 형식을 확인하세요.')
         self.library, self.root, self.tolerance = library, root.absolute(), tolerance
+        self.extension = '.' + file_format
 
     def preview(self, custom=None, control=None):
         self.library.bind_root(self.root)
@@ -87,13 +90,14 @@ class PlaylistExporter:
             owned = {row['path_key']: dict(row) for row in db.execute('SELECT * FROM playlist_outputs')}
         reserved = set()
         for item in output:
-            path = inside_root(self.root, self.root / (item['name'] + '.m3u'))
+            path = inside_root(self.root, self.root / (item['name'] + self.extension))
             original = owned.get(path_key(path))
             item['previous_hash'] = original['hash'] if original else None
             item['collision'] = path.exists() and (original is None or digest(path) != original['hash'])
             if item['collision']:
                 alias = next((entry for entry in owned.values()
                               if json.loads(entry['definition'])['name'] == item['name']
+                              and Path(entry['path']).suffix.lower() == self.extension
                               and Path(entry['path']).exists() and digest(Path(entry['path'])) == entry['hash']
                               and path_key(entry['path']) != path_key(path)), None)
                 if alias:
@@ -104,10 +108,10 @@ class PlaylistExporter:
                     item['count'] = len(item['paths'])
                     reserved.add(path_key(path))
                     continue
-                candidate = path.with_name(path.stem + ' [music-sorter].m3u')
+                candidate = path.with_name(path.stem + ' [music-sorter]' + self.extension)
                 suffix = 2
                 while candidate.exists() or path_key(candidate) in reserved:
-                    candidate = path.with_name(path.stem + f' [music-sorter {suffix}].m3u')
+                    candidate = path.with_name(path.stem + f' [music-sorter {suffix}]' + self.extension)
                     suffix += 1
                 path = candidate
                 item['previous_hash'] = None

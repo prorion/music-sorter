@@ -16,7 +16,7 @@ MAPPING = dict(UI_THEME=('theme', str), UI_FONT_SCALE=('font_scale', float), NOT
                ANTHROPIC_WORKSPACE_ID=('anthropic_workspace_id', str), MUSICBRAINZ_ENABLED=('musicbrainz_enabled', bool),
                MUSICBRAINZ_CONTACT=('musicbrainz_contact', str), LASTFM_ENABLED=('lastfm_enabled', bool),
                DUPLICATE_DURATION_TOLERANCE_SECONDS=('duplicate_tolerance_seconds', float),
-               ROLLBACK_STORAGE_LIMIT_GIB=('rollback_limit_gib', float))
+               ROLLBACK_STORAGE_LIMIT_GIB=('rollback_limit_gib', float), PLAYLIST_FORMAT=('playlist_format', str))
 MAPPING.update(TRACKS_PER_REQUEST=('llm_tracks_per_request', int),
                LLM_MAX_OUTPUT_TOKENS_PER_TRACK=('llm_max_output_tokens_per_track', int),
                API_TIMEOUT_SECONDS=('llm_timeout_seconds', int), API_MAX_RETRIES=('llm_max_retries', int),
