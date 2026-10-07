@@ -21,6 +21,7 @@ class Settings:
     classify_model: str = "claude-haiku-4-5"
     escalate_provider: str = "anthropic"
     escalate_model: str = "claude-sonnet-5-5"
+    anthropic_workspace_id: str = ""
     duplicate_tolerance_seconds: float = 3.0
 
     @classmethod
@@ -44,6 +45,8 @@ class Settings:
                 raise ValueError("API 서비스를 확인하세요.")
         if not self.classify_model.strip() or not self.escalate_model.strip():
             raise ValueError("모델 ID를 입력하세요.")
+        if not isinstance(self.anthropic_workspace_id, str) or any(ord(char) < 33 or ord(char) > 126 for char in self.anthropic_workspace_id):
+            raise ValueError("Claude 워크스페이스 ID의 공백·줄바꿈을 확인하세요.")
 
     def save(self, path: Path) -> None:
         self.validate()

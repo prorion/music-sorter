@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from .database import Library
 from .settings import Settings, data_directory
 from .ui.main_window import MainWindow
+from .ui.settings_dialog import SettingsDialog
 from .ui.theme import apply_theme
 
 
@@ -19,9 +20,12 @@ def main(argv=None) -> int:
     parser.add_argument("--data-dir", type=Path, default=data_directory(), help="별도 로컬 DB·설정 디렉터리")
     parser.add_argument("--smoke-screen", type=Path, help="GUI 렌더 검증용 PNG 저장 후 종료")
     parser.add_argument("--smoke-media", type=Path, help="렌더 검증과 함께 복사본 MP3를 음소거 재생")
+    parser.add_argument("--smoke-api", action="store_true", help="렌더 검증과 함께 등록된 키의 모델 목록만 조회")
     args = parser.parse_args(argv)
     if args.smoke_media and not args.smoke_screen:
         parser.error("--smoke-media는 --smoke-screen과 함께 사용하세요.")
+    if args.smoke_api and not args.smoke_screen:
+        parser.error("--smoke-api는 --smoke-screen과 함께 사용하세요.")
     app = QApplication(sys.argv[:1])
     QLoggingCategory.setFilterRules("qt.multimedia.ffmpeg.*=false")
     app.setApplicationName("music-sorter")
@@ -40,6 +44,12 @@ def main(argv=None) -> int:
         apply_theme(app, settings.theme, settings.font_scale)
         window = MainWindow(library, settings, config_path)
         window.show()
+        api_dialog = None
+        api_report = {}
+        if args.smoke_api:
+            api_dialog = SettingsDialog(settings, config_path, library, window)
+            api_dialog.menu.setCurrentRow(2)
+            api_dialog.show()
         if args.smoke_media:
             window.player.audio.setVolume(0)
             window.player.set_track(str(args.smoke_media.resolve()))
@@ -52,15 +62,45 @@ def main(argv=None) -> int:
                 report = dict(rendered=True, device_pixel_ratio=window.devicePixelRatioF(),
                               media_requested=bool(args.smoke_media), media_loaded=media_loaded,
                               media_position_advanced=advanced)
+                if api_dialog:
+                    report["connections"] = api_report
+                    report["generation_requests"] = 0
                 args.smoke_screen.with_suffix(".json").write_text(json.dumps(report, indent=2), "utf-8")
-                if not window.grab().save(str(args.smoke_screen)):
+                if not (api_dialog or window).grab().save(str(args.smoke_screen)):
                     app.exit(2)
                 elif args.smoke_media and not (media_loaded and advanced):
                     app.exit(3)
+                elif any(value["status"] == "error" for value in api_report.values()):
+                    app.exit(4)
                 else:
                     window.player.stop()
                     app.quit()
-            QTimer.singleShot(2000 if args.smoke_media else 700, snapshot)
+            if api_dialog:
+                services = iter(("openai", "anthropic"))
+
+                def check_next():
+                    provider = next(services, None)
+                    if provider is None:
+                        QTimer.singleShot(700, snapshot)
+                        return
+                    if not api_dialog.connection_buttons[provider].isEnabled():
+                        status = "not_registered" if api_dialog.key_states[provider].text() == "미등록" else "error"
+                        api_report[provider] = {"status": status}
+                        QTimer.singleShot(0, check_next)
+                        return
+                    api_dialog.check_connection(provider)
+                    worker = api_dialog.connection_worker
+
+                    def checked():
+                        api_report[provider] = {"status": "verified" if worker.outcome is not None else "error",
+                                                "models": len(worker.outcome.models) if worker.outcome else 0}
+                        QTimer.singleShot(0, check_next)
+
+                    worker.finished.connect(checked)
+
+                QTimer.singleShot(300, check_next)
+            else:
+                QTimer.singleShot(2000 if args.smoke_media else 700, snapshot)
         return app.exec()
     except Exception as error:
         QMessageBox.critical(None, "시작 보류", f"로컬 설정·DB를 열지 못했습니다 ({type(error).__name__}). 원본 데이터를 보존한 채 설정·DB 상태를 확인하세요.")

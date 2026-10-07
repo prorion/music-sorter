@@ -1,13 +1,15 @@
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                               QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+                              QMessageBox, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..database import Library, now
 from ..settings import CredentialStore, Settings
+from .connection_worker import ConnectionWorker
 
 
 class SettingsDialog(QDialog):
@@ -17,6 +19,8 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings, self.config_path, self.library = settings, config_path, library
         self.vault = CredentialStore()
+        self.connection_worker = None
+        self.model_lists = {}
         self.setWindowTitle("설정 · music-sorter")
         self.resize(850, 640)
         layout = QVBoxLayout(self)
@@ -68,9 +72,12 @@ class SettingsDialog(QDialog):
         music.addRow(self.note(f"DB: {library.path}"))
 
         api = self.page("LLM / API 연결")
-        api.addRow(self.note("키 등록·삭제는 즉시 로컬 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\nAPI 연결 확인·모델 조회·실제 분류는 2단계에서 제공됩니다."))
+        api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n연결 확인은 모델 목록만 조회합니다. 음악 전송·분류 요청은 하지 않습니다."))
         self.key_edits = {}
         self.key_states = {}
+        self.connection_buttons = {}
+        self.key_buttons = {}
+        self.connection_details = {}
         for provider, title in (("openai", "OpenAI"), ("anthropic", "Claude"), ("lastfm", "Last.fm")):
             key = QLineEdit()
             key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -87,11 +94,28 @@ class SettingsDialog(QDialog):
             delete = QPushButton("삭제")
             delete.clicked.connect(lambda _, p=provider: self.delete_key(p))
             status = QLabel()
+            status.setTextFormat(Qt.TextFormat.PlainText)
             self.key_states[provider] = status
             for widget in (show, save, delete, status):
                 actions.addWidget(widget)
             api.addRow(controls)
+            self.key_buttons[provider] = (save, delete)
+            if provider in {"openai", "anthropic"}:
+                connect = QPushButton("연결 확인 / 모델 조회")
+                connect.clicked.connect(lambda _, p=provider: self.check_connection(p))
+                self.connection_buttons[provider] = connect
+                api.addRow(connect)
+                detail = self.note("확인 결과는 이 창에서만 유지됩니다.")
+                detail.setTextFormat(Qt.TextFormat.PlainText)
+                self.connection_details[provider] = detail
+                api.addRow(detail)
+            else:
+                api.addRow(self.note("Last.fm 연결 확인·음악 정보 조회는 후속 기능입니다."))
             self.refresh_key(provider)
+        self.workspace = QLineEdit(settings.anthropic_workspace_id)
+        self.workspace.setPlaceholderText("선택 · 여러 워크스페이스용 Claude 키에 필요")
+        self.workspace.textChanged.connect(lambda: self.invalidate_connection("anthropic"))
+        api.addRow("Claude 워크스페이스 ID", self.workspace)
 
         classification = self.page("분류와 비용")
         self.providers, self.models = [], []
@@ -101,11 +125,16 @@ class SettingsDialog(QDialog):
             combo.addItem("Claude", "anthropic")
             combo.addItem("OpenAI", "openai")
             combo.setCurrentIndex(combo.findData(provider))
-            edit = QLineEdit(model)
+            edit = QComboBox()
+            edit.setEditable(True)
+            edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            edit.setEditText(model)
             self.providers.append(combo)
             self.models.append(edit)
             classification.addRow(f"{prefix} 서비스", combo)
             classification.addRow(f"{prefix} 모델 ID", edit)
+            combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
+        classification.addRow(self.note("API 연결 메뉴에서 조회한 모델을 목록에서 선택하거나 ID를 직접 입력하세요.\n목록 조회 성공은 선택 모델의 분류·구조화 출력·Batch·잔액 확인을 뜻하지 않습니다."))
         classification.addRow(self.note("선택은 저장할 수 있습니다. 현재는 유료 요청을 실행하지 않습니다.\n작업별 예산·Batch·재판정·가사·신뢰도 설정은 API 구현 단계에서 제공됩니다."))
 
         external = self.page("외부 음악 정보")
@@ -141,7 +170,11 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         self.menu.addItem(title)
-        self.pages.addWidget(widget)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(widget)
+        self.pages.addWidget(scroll)
         return layout
 
     def choose_root(self):
@@ -151,25 +184,104 @@ class SettingsDialog(QDialog):
 
     def refresh_key(self, provider):
         try:
-            self.key_states[provider].setText("등록됨 · 미확인" if self.vault.get(provider) else "미등록")
+            registered = bool(self.vault.get(provider))
+            self.key_states[provider].setText("등록됨 · 미확인" if registered else "미등록")
+            if provider in self.connection_buttons:
+                self.connection_buttons[provider].setEnabled(registered)
         except Exception:
             self.key_states[provider].setText("저장소 접근 오류")
+            if provider in self.connection_buttons:
+                self.connection_buttons[provider].setEnabled(False)
+
+    def invalidate_connection(self, provider):
+        self.model_lists.pop(provider, None)
+        self.refresh_key(provider)
+        if provider in self.connection_details:
+            self.connection_details[provider].setText("확인 결과는 이 창에서만 유지됩니다.")
+        if hasattr(self, "providers"):
+            for index, combo in enumerate(self.providers):
+                if combo.currentData() == provider:
+                    self.refresh_models(index)
+
+    def refresh_models(self, index):
+        combo = self.models[index]
+        text = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        for model in self.model_lists.get(self.providers[index].currentData(), ()):
+            combo.addItem(model.id)
+            combo.setItemData(combo.count() - 1, model.name, Qt.ItemDataRole.ToolTipRole)
+        combo.setEditText(text)
+        combo.blockSignals(False)
+
+    def connection_busy(self):
+        return self.connection_worker is not None
+
+    def check_connection(self, provider):
+        if self.connection_busy():
+            return
+        if self.key_edits[provider].text():
+            self.connection_details[provider].setText("입력 중인 키는 미등록입니다. 먼저 등록 / 교체를 눌러 저장하세요.")
+            return
+        self.invalidate_connection(provider)
+        self.key_states[provider].setText("연결 확인 중…")
+        self.connection_details[provider].setText("모델 목록 조회 중 · 설정 창 종료는 조회 완료 후 가능합니다.")
+        for button in self.connection_buttons.values():
+            button.setEnabled(False)
+        for buttons in self.key_buttons.values():
+            for button in buttons:
+                button.setEnabled(False)
+        self.workspace.setEnabled(False)
+        worker = ConnectionWorker(provider, self.vault, self.workspace.text().strip(), self)
+        self.connection_worker = worker
+        worker.finished.connect(self.connection_finished)
+        worker.start()
+
+    def connection_finished(self):
+        worker = self.connection_worker
+        provider = worker.provider
+        for buttons in self.key_buttons.values():
+            for button in buttons:
+                button.setEnabled(True)
+        self.workspace.setEnabled(True)
+        for service in self.connection_buttons:
+            # Preserve the other service's displayed verification status.
+            try:
+                self.connection_buttons[service].setEnabled(bool(self.vault.get(service)))
+            except Exception:
+                self.connection_buttons[service].setEnabled(False)
+        stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        if worker.outcome is None:
+            self.key_states[provider].setText("연결 오류")
+            self.connection_details[provider].setText(f"{worker.message}\n확인 시각: {stamp}")
+        else:
+            self.model_lists[provider] = worker.outcome.models
+            self.key_states[provider].setText("연결 확인됨")
+            self.connection_details[provider].setText(f"모델 {len(worker.outcome.models)}개 조회 · {stamp}\n분류 실행 권한·잔액은 별도 확인이 필요합니다.")
+        for index in range(len(self.providers)):
+            self.refresh_models(index)
+        self.connection_worker = None
+        worker.deleteLater()
 
     def save_key(self, provider):
+        if self.connection_busy():
+            return
         try:
             self.vault.set(provider, self.key_edits[provider].text())
             self.key_edits[provider].clear()
-            self.refresh_key(provider)
+            self.invalidate_connection(provider)
         except Exception:
             QMessageBox.warning(self, "키 저장 보류", "키 입력과 Windows 자격 증명 저장소를 확인하세요. 평문 파일에 저장하지 않았습니다.")
 
     def delete_key(self, provider):
+        if self.connection_busy():
+            return
         if QMessageBox.question(self, "키 삭제", "등록한 키를 자격 증명 저장소에서 삭제할까요?") != QMessageBox.StandardButton.Yes:
             return
         try:
             self.vault.delete(provider)
             self.key_edits[provider].clear()
-            self.refresh_key(provider)
+            self.invalidate_connection(provider)
         except Exception:
             QMessageBox.warning(self, "키 삭제 보류", "Windows 자격 증명 저장소에 접근할 수 없습니다.")
 
@@ -177,10 +289,24 @@ class SettingsDialog(QDialog):
         return replace(self.settings, music_root=self.root.text(), theme=self.theme.currentData(),
                           font_scale=self.scale.value(), include_subfolders=self.recursive.isChecked(),
                           notify_on_completion=self.notify.isChecked(), duplicate_tolerance_seconds=self.tolerance.value(),
-                          classify_provider=self.providers[0].currentData(), classify_model=self.models[0].text().strip(),
-                          escalate_provider=self.providers[1].currentData(), escalate_model=self.models[1].text().strip())
+                          classify_provider=self.providers[0].currentData(), classify_model=self.models[0].currentText().strip(),
+                          escalate_provider=self.providers[1].currentData(), escalate_model=self.models[1].currentText().strip(),
+                          anthropic_workspace_id=self.workspace.text().strip())
+
+    def done(self, result):
+        if self.connection_busy():
+            return
+        super().done(result)
+
+    def closeEvent(self, event):
+        if self.connection_busy():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def reject(self):
+        if self.connection_busy():
+            return
         unsaved = self.draft() != self.settings or any(edit.text() for edit in self.key_edits.values())
         if unsaved and QMessageBox.question(self, "미저장 설정", "저장하지 않은 설정·입력 키를 버릴까요? 이미 등록·삭제한 키는 유지됩니다.") != QMessageBox.StandardButton.Yes:
             return

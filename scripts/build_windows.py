@@ -8,17 +8,22 @@ import sys
 from importlib.metadata import distribution
 from pathlib import Path
 
+from music_sorter import __version__
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--output-dir", type=Path, help="실행 중인 이전 빌드를 보존할 별도 출력 폴더")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    output = args.output_dir.resolve() if args.output_dir else root / "dist"
+    output.mkdir(parents=True, exist_ok=True)
     build = root / "build"
     build.mkdir(exist_ok=True)
     config = configparser.ConfigParser()
     config["app"] = {"title": "music-sorter", "project_dir": str(root), "input_file": str(root / "main.py"),
-                     "exec_directory": str(root / "dist"), "project_file": "", "icon": ""}
+                     "exec_directory": str(output), "project_file": "", "icon": ""}
     config["python"] = {"python_path": sys.executable, "packages": "Nuitka==4.2.2"}
     config["qt"] = {"modules": "Core,Gui,Widgets,Multimedia", "plugins": "multimedia,platforms,imageformats,styles",
                     "qml_files": "", "excluded_qml_plugins": ""}
@@ -37,7 +42,7 @@ def main():
     result = subprocess.call(command, cwd=root)
     if result != 0 or args.dry_run:
         return result
-    bundle = root / "dist" / "music-sorter.dist"
+    bundle = output / "music-sorter.dist"
     license_root = bundle / "third-party-licenses"
     license_root.mkdir(exist_ok=True)
     notices = []
@@ -54,7 +59,8 @@ def main():
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, destination)
     (bundle / "DEPENDENCIES.json").write_text(json.dumps(notices, indent=2), "utf-8")
-    (bundle / "README.txt").write_text("music-sorter 0.2 local development prototype\nRun main.exe.\n"
+    (bundle / "README.txt").write_text(f"music-sorter {__version__} local development prototype\nRun main.exe.\n"
+                                      "OpenAI/Claude model-list connection checks are supported.\n"
                                       "API classification and music file changes are not implemented.\n"
                                       "Separate Windows validation and full distribution license review remain pending.\n", "utf-8")
     return 0
