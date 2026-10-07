@@ -121,6 +121,12 @@ class ClassifyDialog(QDialog):
                 widget.blockSignals(False)
             self.budget.setText(str(self.engine.job(job_id)['budget'] / 1000000))
         self.load()
+        if job_id:
+            counts = self.engine.summary(job_id)['counts']
+            labels = {'prepared': '미제출', 'remote': '원격 처리', 'proposal': '검토 제안', 'completed': '완료',
+                      'cancelled': '취소', 'failed': '실패', 'blocked': '제출 보류', 'unknown': '처리 확인 필요',
+                      'sending': '전송 중', 'received': '응답 수신'}
+            self.status.setText('저장된 작업 · ' + ' · '.join(f'{labels.get(state, state)} {count:,}곡' for state, count in counts.items()))
 
     def model_changed(self):
         escalate = self.purpose.currentData() == 'escalate'
@@ -244,6 +250,10 @@ class ClassifyDialog(QDialog):
                 self.table.setItem(i, j, item)
         if self.job_id:
             summary = self.engine.summary(self.job_id)
+            self.scope.blockSignals(True)
+            self.scope.setItemText(0, f"작업 대상 {sum(summary['counts'].values()):,}곡")
+            self.scope.setCurrentIndex(0)
+            self.scope.blockSignals(False)
             warning = ' · 예산 80% 이상' if summary['actual'] + summary['reserved'] >= summary['budget'] * .8 else ''
             self.model_label.setText(f"{summary['options']['provider']} · {summary['options']['model']} · {summary['options']['execution']} | "
                                      f"집계 US${summary['actual']/1000000:.6f} · 미완료 예약 US${summary['reserved']/1000000:.6f} · "

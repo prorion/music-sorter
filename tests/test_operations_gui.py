@@ -103,3 +103,22 @@ def test_uncertain_request_confirmation_gui_releases_only_explicit_selection(qtb
     QTimer.singleShot(100, confirm)
     dialog.resolve_unknown()
     assert engine.summary(job)['reserved'] == 0 and not dialog.resolve_button.isEnabled()
+
+
+def test_saved_classification_scope_does_not_follow_current_selection(qtbot, library, root, song, fake_reader):
+    from music_sorter.scanner import scan_library
+    from music_sorter.classifier import Classifier
+    from music_sorter.ui.classify_dialog import ClassifyDialog
+    second = root / 'second.mp3'
+    second.write_bytes(b'second-song')
+    scan_library(library, root)
+    ids = [row['id'] for row in library.list_tracks()[0]]
+    assert len(ids) == 2
+    engine = Classifier(library)
+    job = engine.prepare(ids, provider='anthropic', model='claude-haiku-4-5', budget=1, execution='batch')
+    dialog = ClassifyDialog(library, Settings(), ids[:1], {}, job_id=job)
+    qtbot.addWidget(dialog)
+    assert dialog.scope.currentText() == '작업 대상 2곡' and not dialog.scope.isEnabled()
+    assert dialog.execution.currentData() == 'batch'
+    assert dialog.status.text() == '저장된 작업 · 미제출 2곡'
+    assert engine.summary(job)['actual'] == 0
