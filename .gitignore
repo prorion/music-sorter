@@ -32,3 +32,13 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# 로컬 검증 결과·패키징 산출물
+artifacts/
+build/
+dist/
+deployment/
+pysidedeploy.spec
+settings.json
+rollback/
+backups/
