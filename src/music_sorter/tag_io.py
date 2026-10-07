@@ -36,6 +36,12 @@ class TagLayout:
 def read_layout(path: Path) -> TagLayout:
     with path.open("rb") as stream:
         header = stream.read(10)
+        # Check appended/footer tags even when there is no leading tag.
+        stream.seek(max(0, path.stat().st_size - 138))
+        trailer = stream.read()
+        if trailer[-10:-7] == b"3DI" or trailer[-138:-135] == b"3DI":
+            raise ValueError("파일 끝의 ID3v2 태그는 장르 기록을 지원하지 않습니다.")
+        stream.seek(10)
         if not header.startswith(b"ID3"):
             return TagLayout(b"", 4, [])
         if len(header) != 10 or header[3] not in {3, 4} or header[4:6] != b"\0\0":
@@ -46,11 +52,6 @@ def read_layout(path: Path) -> TagLayout:
         body = stream.read(length)
         if len(body) != length:
             raise ValueError("ID3 영역이 잘렸습니다.")
-        # Appended ID3v2 may override the leading tag. Do not edit an ambiguous layout.
-        stream.seek(max(0, path.stat().st_size - 138))
-        trailer = stream.read()
-        if trailer[-10:-7] == b"3DI" or trailer[-138:-135] == b"3DI":
-            raise ValueError("파일 끝의 ID3v2 태그는 장르 기록을 지원하지 않습니다.")
     cursor, frames = 0, []
     while cursor < length:
         if body[cursor] == 0:

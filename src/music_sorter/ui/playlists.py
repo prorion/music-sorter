@@ -135,6 +135,10 @@ class PlaylistPage(QWidget):
         settings = self.settings_getter()
         if not settings.music_root:
             return
+        worker = getattr(self.window(), 'worker', None)
+        if worker and worker.isRunning():
+            self.window().status.setText('진행 중인 스캔을 마치거나 취소한 뒤 재생목록을 생성하세요.')
+            return
         if hasattr(self.window(), 'player'):
             self.window().player.stop()
         PlaylistDialog(self.library, settings, self).exec()

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabe
 
 from ..file_ops import FileOperations
 from ..scanner import ScanControl
+from ..llm import ProviderError
 
 
 class OperationWorker(QThread):
@@ -20,8 +21,8 @@ class OperationWorker(QThread):
     def run(self):
         try:
             self.result.emit(self.action(self.control, lambda a, b: self.progress.emit(a, b)))
-        except (ValueError, OSError) as error:
-            self.error.emit(str(error) if isinstance(error, ValueError) else '파일 접근 실패. 작업 기록과 경로를 확인하세요.')
+        except (ValueError, OSError, ProviderError) as error:
+            self.error.emit(str(error) if isinstance(error, (ValueError, ProviderError)) else '파일 접근 실패. 작업 기록과 경로를 확인하세요.')
         except Exception:
             self.error.emit('작업 중 오류가 발생했습니다. 완료 결과와 복구 자료는 보존했습니다.')
 
@@ -30,7 +31,7 @@ class FileDialog(QDialog):
     def __init__(self, library, settings, selected, filters, parent=None, job_id=None):
         super().__init__(parent)
         self.library, self.settings, self.selected, self.filters = library, settings, selected, filters
-        self.engine = FileOperations(library, Path(settings.music_root))
+        self.engine = FileOperations(library, Path(settings.music_root), limit_gib=settings.rollback_limit_gib)
         self.worker, self.job_id = None, job_id
         self.offset = 0
         self.setWindowTitle('파일 정리 · 미리보기와 복구')
@@ -178,7 +179,7 @@ class FileDialog(QDialog):
                 self.table.setItem(i, j, item)
         self.apply_button.setEnabled(bool(counts.get('planned')) and not self.busy())
         self.undo_button.setEnabled(bool(counts.get('recorded')) and not self.busy())
-        self.resume_button.setEnabled(any(counts.get(state) for state in ('prepared', 'tag_done', 'file_done')) and not self.busy())
+        self.resume_button.setEnabled(any(counts.get(state) for state in ('prepared', 'tag_done', 'file_done', 'undo_prepared')) and not self.busy())
         self.previous.setEnabled(self.offset > 0 and not self.busy())
         self.next.setEnabled(self.offset + len(rows) < total and not self.busy())
         self.page_label.setText(f'{total:,}개 계획 · 적용 가능 {counts.get("planned", 0):,} · 보류 {counts.get("blocked", 0):,} · 페이지 {self.offset // 200 + 1}')

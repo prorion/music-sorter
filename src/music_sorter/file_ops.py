@@ -111,6 +111,8 @@ class FileOperations:
         self.library.bind_root(self.root)
         control, progress = control or ScanControl(), progress or (lambda *_: None)
         policies = duplicate_policy(self.library, tolerance)
+        track_ids = list(dict.fromkeys(track_ids))
+        selected = set(track_ids)
         job_id = self.library.start_job("file_preview")
         reserved = set()
         completed = blocked = 0
@@ -131,6 +133,14 @@ class FileOperations:
                     if policy.get("state") == "pending":
                         if not archive_duplicates:
                             raise ValueError("중복 후보를 먼저 검토하거나 후보 폴더 보관을 선택하세요.")
+                        members = policy['token'].split(':')
+                        if not set(members) <= selected:
+                            raise ValueError('중복 후보 폴더 보관은 후보 그룹 전체를 선택해야 합니다.')
+                        for member_id in members:
+                            member = self.library.track(member_id)
+                            member_path = inside_root(self.root, Path(member['path']))
+                            if member['file_state'] != 'ready' or digest(member_path) != member['hash']:
+                                raise ValueError('중복 후보 그룹에 확인 불가능·외부 변경 파일이 있습니다.')
                         directory = self.root / "_중복검토" / policy["folder"] if organize else directory
                     elif organize:
                         folder = "_삭제예정" if policy.get("state") == "discarded" else (
@@ -203,6 +213,11 @@ class FileOperations:
         current = duplicate_policy(self.library, plan["tolerance"]).get(plan["id"], {})
         if current != plan["duplicate"]:
             raise ValueError("중복 검토 결과가 달라졌습니다. 새 미리보기가 필요합니다.")
+        if current.get('state') == 'pending':
+            for member_id in current['token'].split(':'):
+                member = self.library.track(member_id)
+                if member['file_state'] != 'ready' or digest(inside_root(self.root, Path(member['path']))) != member['hash']:
+                    raise ValueError('중복 후보 그룹의 파일 상태가 달라졌습니다.')
         return track
 
     def apply_one(self, operation, *, fault=None):
@@ -332,6 +347,14 @@ class FileOperations:
         self.recover()
         completed = blocked = 0
         for operation in self._iter_operations(job_id):
+            if operation['state'] == 'undo_prepared':
+                try:
+                    with self.library._write_lock:
+                        self._undo_one(operation)
+                        completed += 1
+                except (ValueError, OSError):
+                    blocked += 1
+                continue
             if operation['state'] not in {'prepared', 'tag_done', 'file_done'}:
                 continue
             try:
@@ -397,47 +420,59 @@ class FileOperations:
         return {"recovered": recovered, "pending": pending}
 
     def undo_preview(self, operation_id):
-        matches = [op for op in self.operations() if op["id"] == operation_id]
+        with self.library.connection() as db:
+            row = db.execute('SELECT job_id FROM file_ops WHERE id=?', (operation_id,)).fetchone()
+        matches = [op for op in self._iter_operations(row[0]) if op['id'] == operation_id] if row else []
         if not matches or matches[0]["state"] != "recorded":
             raise ValueError("되돌릴 완료 파일 작업이 없습니다.")
         operation = matches[0]
-        later = [op for op in self.operations() if op["track_id"] == operation["track_id"] and op["state"] == "recorded"
+        later = [op for op in self._iter_operations() if op["track_id"] == operation["track_id"] and op["state"] == "recorded"
                  and (op["created_at"], op["id"]) > (operation["created_at"], operation["id"])]
         return sorted(later + [operation], key=lambda op: (op["created_at"], op["id"]), reverse=True)
 
     def undo(self, operation_id, fault=None):
         for operation in self.undo_preview(operation_id):
             with self.library._write_lock:
-                plan, result = operation["plan"], operation["result"]
-                current = inside_root(self.root, Path(plan["destination"]))
-                original = inside_root(self.root, Path(plan["path"]))
-                track = self.library.track(plan["id"])
-                if path_key(track["path"]) != path_key(current) or track["hash"] != result["hash"] or digest(current) != result["hash"]:
-                    raise ValueError("적용 후 외부 변경·누락이 있어 되돌리기를 보류합니다.")
-                if path_key(current) != path_key(original) and original.exists():
-                    raise ValueError("원래 위치에 다른 파일이 있습니다. 덮어쓰지 않습니다.")
-                temporary = None
-                if result["original_tag"]:
-                    backup = Path(result["original_tag"])
-                    if digest(backup) != result["original_tag_hash"]:
-                        raise ValueError("ID3 복구 자료 무결성을 확인할 수 없습니다.")
-                    temporary = current.with_name(f".music-sorter-undo-{operation['id']}.tmp")
-                    write_replacement(current, temporary, result["tag_offset"], backup.read_bytes())
-                    if digest(temporary) != plan["hash"]:
-                        raise ValueError("원본 복원 해시가 맞지 않습니다. 원본을 교체하지 않았습니다.")
-                self._state(operation["id"], "undo_prepared", result)
-                if temporary:
-                    if digest(current) != result["hash"]:
-                        raise ValueError("되돌리기 직전 외부 변경을 확인했습니다.")
-                    os.replace(temporary, current)
-                original.parent.mkdir(parents=True, exist_ok=True)
-                inside_root(self.root, original)
-                if path_key(original) != path_key(current):
-                    if original.exists():
-                        raise ValueError("되돌리기 직전 원래 위치 충돌을 확인했습니다.")
-                    os.rename(current, original)
-                if fault:
-                    fault("undo_file_done")
-                if digest(original) != plan["hash"]:
-                    raise ValueError("원본 복원 결과 해시가 맞지 않습니다.")
-                self._record(operation, result, original, undo=True)
+                self._undo_one(operation, fault)
+
+    def _undo_one(self, operation, fault=None):
+        plan, result = operation['plan'], operation['result']
+        current = inside_root(self.root, Path(plan['destination']))
+        original = inside_root(self.root, Path(plan['path']))
+        track = self.library.track(plan['id'])
+        current_hash = digest(current)
+        expected = {result['hash'], plan['hash']} if operation['state'] == 'undo_prepared' else {result['hash']}
+        if path_key(track['path']) != path_key(current) or track['hash'] != result['hash'] or current_hash not in expected:
+            raise ValueError('적용 후 외부 변경·누락이 있어 되돌리기를 보류합니다.')
+        if path_key(current) != path_key(original) and original.exists():
+            raise ValueError('원래 위치에 다른 파일이 있습니다. 덮어쓰지 않습니다.')
+        temporary = None
+        if result['original_tag'] and current_hash != plan['hash']:
+            backup = Path(result['original_tag'])
+            if digest(backup) != result['original_tag_hash']:
+                raise ValueError('ID3 복구 자료 무결성을 확인할 수 없습니다.')
+            temporary = current.with_name(f".music-sorter-undo-{operation['id']}.tmp")
+            if not temporary.exists():
+                write_replacement(current, temporary, result['tag_offset'], backup.read_bytes())
+            if digest(temporary) != plan['hash']:
+                raise ValueError('원본 복원 해시가 맞지 않습니다. 원본을 교체하지 않았습니다.')
+        self._state(operation['id'], 'undo_prepared', result)
+        if fault:
+            fault('undo_prepared')
+        if temporary:
+            if digest(current) != result['hash']:
+                raise ValueError('되돌리기 직전 외부 변경을 확인했습니다.')
+            os.replace(temporary, current)
+        if fault:
+            fault('undo_tag_done')
+        original.parent.mkdir(parents=True, exist_ok=True)
+        inside_root(self.root, original)
+        if path_key(original) != path_key(current):
+            if original.exists():
+                raise ValueError('되돌리기 직전 원래 위치 충돌을 확인했습니다.')
+            os.rename(current, original)
+        if fault:
+            fault('undo_file_done')
+        if digest(original) != plan['hash']:
+            raise ValueError('원본 복원 결과 해시가 맞지 않습니다.')
+        self._record(operation, result, original, undo=True)

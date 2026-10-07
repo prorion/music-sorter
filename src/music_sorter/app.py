@@ -42,6 +42,8 @@ def main(argv=None) -> int:
         settings = Settings.load(config_path)
         library = Library(args.data_dir / "music-sorter.sqlite3")
         library.recover_interrupted_jobs()
+        from .classifier import Classifier
+        Classifier(library).recover()
         apply_theme(app, settings.theme, settings.font_scale)
         window = MainWindow(library, settings, config_path)
         if settings.music_root:

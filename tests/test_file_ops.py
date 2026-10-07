@@ -127,7 +127,8 @@ def test_undo_crash_recovers_original_db(library, root, tagged):
     job = engine.preview([track["id"]], organize=True, write_genre=True)
     engine.apply(job)
     def crash(stage):
-        raise RuntimeError("simulated undo crash")
+        if stage == 'undo_file_done':
+            raise RuntimeError("simulated undo crash")
     with pytest.raises(RuntimeError):
         engine.undo(engine.operations(job)[0]["id"], fault=crash)
     assert tagged.read_bytes() == original
@@ -229,3 +230,44 @@ def test_unsupported_header_blocks_tag_only(tagged):
     tagged.write_bytes(data)
     with pytest.raises(ValueError, match="헤더"):
         read_layout(tagged)
+
+
+@pytest.mark.parametrize('stage', ['undo_prepared', 'undo_tag_done'])
+def test_interrupted_undo_resumes_without_rewriting_tag(library, root, tagged, stage):
+    scan_library(library, root)
+    track = confirmed(library)
+    original = tagged.read_bytes()
+    engine = FileOperations(library, root)
+    job = engine.preview([track['id']], organize=True, write_genre=True)
+    engine.apply(job)
+    op = engine.operations(job)[0]
+    def crash(where):
+        if where == stage:
+            raise RuntimeError('crash')
+    with pytest.raises(RuntimeError):
+        engine.undo(op['id'], fault=crash)
+    fresh = FileOperations(library, root)
+    assert fresh.recover()['pending'] == [op['id']]
+    assert fresh.resume(job) == {'completed': 1, 'blocked': 0}
+    assert tagged.read_bytes() == original and fresh.operations(job)[0]['state'] == 'undone'
+
+
+def test_no_leading_id3_appended_tag_is_rejected(root):
+    path = root / 'appended.mp3'
+    path.write_bytes(b'audio' * 50 + b'3DI' + bytes(7))
+    with pytest.raises(ValueError, match='파일 끝'):
+        read_layout(path)
+
+
+def test_duplicate_archive_requires_whole_group(library, root, tagged):
+    copy = root / 'copy' / tagged.name
+    copy.parent.mkdir()
+    copy.write_bytes(tagged.read_bytes())
+    scan_library(library, root)
+    ids = [track['id'] for track in library.list_tracks()[0]]
+    engine = FileOperations(library, root)
+    partial = engine.preview(ids[:1], organize=True, archive_duplicates=True)
+    assert engine.operations(partial)[0]['state'] == 'blocked'
+    assert '전체' in engine.operations(partial)[0]['reason']
+    whole = engine.preview(ids, organize=True, archive_duplicates=True)
+    assert engine.operation_counts(whole) == {'planned': 2}

@@ -23,6 +23,10 @@ class Settings:
     escalate_model: str = "claude-sonnet-5-5"
     anthropic_workspace_id: str = ""
     duplicate_tolerance_seconds: float = 3.0
+    musicbrainz_enabled: bool = True
+    musicbrainz_contact: str = ''
+    lastfm_enabled: bool = True
+    rollback_limit_gib: float = 10.0
 
     @classmethod
     def load(cls, path: Path) -> Settings:
@@ -40,6 +44,12 @@ class Settings:
             raise ValueError("글자 크기 범위를 확인하세요.")
         if not isinstance(self.duplicate_tolerance_seconds, (int, float)) or not 0 <= self.duplicate_tolerance_seconds <= 30:
             raise ValueError("중복 길이 허용값은 0~30초입니다.")
+        if not isinstance(self.rollback_limit_gib, (int, float)) or not .1 <= self.rollback_limit_gib <= 10000:
+            raise ValueError('ID3 복구 보관 한도는 0.1~10,000GiB입니다.')
+        if not isinstance(self.musicbrainz_contact, str) or len(self.musicbrainz_contact) > 250 or any(ord(c) < 33 or ord(c) > 126 for c in self.musicbrainz_contact):
+            raise ValueError('MusicBrainz 연락처는 공백·줄바꿈 없는 이메일 또는 HTTPS URL입니다.')
+        if self.musicbrainz_contact and not ('@' in self.musicbrainz_contact or self.musicbrainz_contact.startswith('https://')):
+            raise ValueError('MusicBrainz 연락처에 이메일 또는 HTTPS URL을 입력하세요.')
         for provider in (self.classify_provider, self.escalate_provider):
             if provider not in {"anthropic", "openai"}:
                 raise ValueError("API 서비스를 확인하세요.")

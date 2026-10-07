@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from .classification import AXES, empty_classification, manual_patch, review_state, validate
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def now() -> str:
@@ -37,10 +37,10 @@ class Library:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in {0, 1, 2, SCHEMA_VERSION}:
+        if version not in {0, 1, 2, 3, SCHEMA_VERSION}:
             raise RuntimeError("지원하지 않는 DB 버전입니다. 새 버전으로 열어 주세요.")
-        if version in {1, 2}:
-            self.backup(path.parent / "backups" / f"before-schema-3-{uuid4().hex}.sqlite3")
+        if version in {1, 2, 3}:
+            self.backup(path.parent / "backups" / f"before-schema-4-{uuid4().hex}.sqlite3")
         with self.connection(write=True) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -99,6 +99,30 @@ class Library:
                 CREATE TABLE IF NOT EXISTS playlist_outputs (
                     path_key TEXT PRIMARY KEY, path TEXT NOT NULL, hash TEXT NOT NULL,
                     definition TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS llm_jobs (
+                    id TEXT PRIMARY KEY, options TEXT NOT NULL, budget INTEGER NOT NULL,
+                    actual INTEGER NOT NULL DEFAULT 0, reserved INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS llm_targets (
+                    sequence INTEGER PRIMARY KEY, job_id TEXT NOT NULL, track_id TEXT NOT NULL,
+                    snapshot TEXT NOT NULL, input TEXT NOT NULL, cache_key TEXT NOT NULL,
+                    state TEXT NOT NULL, result TEXT, reason TEXT NOT NULL DEFAULT '',
+                    UNIQUE(job_id,track_id)
+                );
+                CREATE INDEX IF NOT EXISTS llm_target_job ON llm_targets(job_id,state,sequence);
+                CREATE TABLE IF NOT EXISTS llm_requests (
+                    id TEXT PRIMARY KEY, job_id TEXT NOT NULL, target_ids TEXT NOT NULL,
+                    state TEXT NOT NULL, reserved INTEGER NOT NULL, actual INTEGER NOT NULL DEFAULT 0,
+                    attempts INTEGER NOT NULL DEFAULT 0, response TEXT, reason TEXT NOT NULL DEFAULT '',
+                    remote_id TEXT, upload_id TEXT, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS llm_cache (
+                    key TEXT PRIMARY KEY, result TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS external_cache (
+                    key TEXT PRIMARY KEY, service TEXT NOT NULL, input TEXT NOT NULL,
+                    result TEXT NOT NULL, created_at TEXT NOT NULL
                 );
             """)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")

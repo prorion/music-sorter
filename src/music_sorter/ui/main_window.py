@@ -220,11 +220,13 @@ class MainWindow(QMainWindow):
         self.bulk_button.setToolTip("Ctrl/Shift로 선택한 곡 · 검색 결과 전체 · 라이브러리 전체")
         self.bulk_button.clicked.connect(self.open_bulk)
         actions.addWidget(self.bulk_button)
-        for title, tooltip in (("분류 실행", "외부 API·LLM은 다음 개발 단계에서 제공합니다"),):
-            button = QPushButton(title)
-            button.setEnabled(False)
-            button.setToolTip(tooltip)
-            actions.addWidget(button)
+        self.external_button = QPushButton('음악 정보 보완')
+        self.external_button.clicked.connect(self.open_external)
+        actions.addWidget(self.external_button)
+        self.classify_button = QPushButton('분류 실행')
+        self.classify_button.setToolTip('입력·예산 계획 확인 후 OpenAI/Claude 분류 · Batch 결과 수집')
+        self.classify_button.clicked.connect(self.open_classify)
+        actions.addWidget(self.classify_button)
         self.file_button = QPushButton('파일 정리 미리보기')
         self.file_button.clicked.connect(self.open_file_ops)
         actions.addWidget(self.file_button)
@@ -474,6 +476,18 @@ class MainWindow(QMainWindow):
                    job_id=job_id if isinstance(job_id, str) else None).exec()
         self.refresh()
 
+    def open_classify(self, job_id=None):
+        if self.worker and self.worker.isRunning() or not self.settings.music_root:
+            self.status.setText('음악 폴더를 등록하고 스캔을 마친 뒤 분류 계획을 준비하세요.')
+            return
+        if not self.discard_edits():
+            return
+        from .classify_dialog import ClassifyDialog
+        selected = [self.model.rows[index.row()]['id'] for index in self.table.selectionModel().selectedRows()]
+        ClassifyDialog(self.library, self.settings, selected, self.current_filters(), self,
+                       job_id=job_id if isinstance(job_id, str) else None).exec()
+        self.refresh()
+
     def open_job(self, row, column):
         job_id = self.jobs_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         job = next((job for job in self.library.jobs() if job['id'] == job_id), None)
@@ -481,8 +495,21 @@ class MainWindow(QMainWindow):
             return
         if job['kind'] == 'file_preview':
             self.open_file_ops(job['id'])
+        elif job['kind'] == 'llm':
+            self.open_classify(job['id'])
         else:
             QMessageBox.information(self, '작업 상세', job['detail'] or '상세 기록 없음')
+
+    def open_external(self):
+        if self.worker and self.worker.isRunning() or not self.settings.music_root:
+            self.status.setText('음악 폴더를 등록하고 스캔을 마친 뒤 정보를 보완하세요.')
+            return
+        if not self.discard_edits():
+            return
+        from .external_dialog import ExternalDialog
+        selected = [self.model.rows[index.row()]['id'] for index in self.table.selectionModel().selectedRows()]
+        ExternalDialog(self.library, self.settings, selected, self.current_filters(), self).exec()
+        self.refresh()
 
     def turn_page(self, direction):
         if self.discard_edits():

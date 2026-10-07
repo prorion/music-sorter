@@ -112,7 +112,7 @@ class SettingsDialog(QDialog):
                 self.connection_details[provider] = detail
                 api.addRow(detail)
             else:
-                api.addRow(self.note("Last.fm 연결 확인·음악 정보 조회는 후속 기능입니다."))
+                api.addRow(self.note('Last.fm 키는 음악 정보 보완 조회에서 사용합니다. API 오류는 해당 출처 조회 결과에 표시합니다.'))
             self.refresh_key(provider)
         self.workspace = QLineEdit(settings.anthropic_workspace_id)
         self.workspace.setPlaceholderText("선택 · 여러 워크스페이스용 Claude 키에 필요")
@@ -137,12 +137,26 @@ class SettingsDialog(QDialog):
             classification.addRow(f"{prefix} 모델 ID", edit)
             combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
         classification.addRow(self.note("API 연결 메뉴에서 조회한 모델을 목록에서 선택하거나 ID를 직접 입력하세요.\n목록 조회 성공은 선택 모델의 분류·구조화 출력·Batch·잔액 확인을 뜻하지 않습니다."))
-        classification.addRow(self.note("선택은 저장할 수 있습니다. 현재는 유료 요청을 실행하지 않습니다.\n작업별 예산·Batch·재판정·가사·신뢰도 설정은 API 구현 단계에서 제공됩니다."))
+        classification.addRow(self.note("라이브러리의 분류 실행에서 대상·목적·동기/Batch·작업별 USD 예산을 선택합니다.\n가사는 기본 제외하며 미확정 재판정에서만 입력 내용을 확인한 뒤 선택합니다.\n모델 신뢰도는 정답 확률이 아닙니다. 내장 확인 단가가 없는 모델은 제출을 보류합니다."))
 
         external = self.page("외부 음악 정보")
-        external.addRow(self.note("MusicBrainz·Last.fm 조회는 2단계에서 제공합니다.\nLast.fm 키는 API 연결 메뉴에서 등록할 수 있습니다."))
+        self.musicbrainz_enabled = QCheckBox('MusicBrainz 정보 조회')
+        self.musicbrainz_enabled.setChecked(settings.musicbrainz_enabled)
+        external.addRow(self.musicbrainz_enabled)
+        self.musicbrainz_contact = QLineEdit(settings.musicbrainz_contact)
+        self.musicbrainz_contact.setPlaceholderText('요청 User-Agent에 사용할 이메일 또는 HTTPS URL')
+        external.addRow('MusicBrainz 연락처', self.musicbrainz_contact)
+        self.lastfm_enabled = QCheckBox('Last.fm 곡 정보·참고 태그 조회')
+        self.lastfm_enabled.setChecked(settings.lastfm_enabled)
+        external.addRow(self.lastfm_enabled)
+        external.addRow(self.note('정보 보완 버튼에서 실행하며 입력·출처·시각을 캐시합니다.\nMusicBrainz는 연락처가 없으면, Last.fm은 키가 없으면 건너뜁니다.\n제목·아티스트·버전이 다른 후보는 자동 연결하지 않습니다.'))
         output = self.page("파일 정리·재생목록")
-        output.addRow(self.note("라이브러리의 파일 정리 미리보기에서 폴더·이름·장르 기록을 각각 선택합니다.\n실제 적용은 미리보기 확인 뒤 실행하며 작업 이력에서 되돌릴 수 있습니다.\n재생목록 메뉴에서 기본 목록과 조건 조합 목록을 생성합니다. UTF-8·CRLF·상대 경로를 사용합니다.\n복구 자료 보관 한도는 10GiB, 자동 DB 백업은 하루 첫 적용 전 생성하고 최근 7개를 보관합니다."))
+        self.rollback_limit = QDoubleSpinBox()
+        self.rollback_limit.setRange(.1, 10000)
+        self.rollback_limit.setValue(settings.rollback_limit_gib)
+        self.rollback_limit.setSuffix(' GiB')
+        output.addRow('ID3 원본 복구 보관 한도', self.rollback_limit)
+        output.addRow(self.note("라이브러리의 파일 정리 미리보기에서 폴더·이름·장르 기록을 각각 선택합니다.\n실제 적용은 미리보기 확인 뒤 실행하며 작업 이력에서 되돌릴 수 있습니다.\n재생목록 메뉴에서 기본 목록과 조건 조합 목록을 생성합니다. UTF-8·CRLF·상대 경로를 사용합니다.\n복구 자료는 자동 삭제하지 않습니다. 자동 DB 백업은 하루 첫 적용 전 생성하고 최근 7개를 보관합니다."))
         data = self.page("데이터·복구")
         data.addRow(self.note(f"사용자 데이터: {config_path.parent}\n백업은 DB 사본이며 음악 파일을 포함하지 않습니다."))
         backup = QPushButton("검증된 DB 백업 만들기")
@@ -294,7 +308,9 @@ class SettingsDialog(QDialog):
                           notify_on_completion=self.notify.isChecked(), duplicate_tolerance_seconds=self.tolerance.value(),
                           classify_provider=self.providers[0].currentData(), classify_model=self.models[0].currentText().strip(),
                           escalate_provider=self.providers[1].currentData(), escalate_model=self.models[1].currentText().strip(),
-                          anthropic_workspace_id=self.workspace.text().strip())
+                          anthropic_workspace_id=self.workspace.text().strip(),
+                          musicbrainz_enabled=self.musicbrainz_enabled.isChecked(), musicbrainz_contact=self.musicbrainz_contact.text().strip(),
+                          lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value())
 
     def done(self, result):
         if self.connection_busy():

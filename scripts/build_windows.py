@@ -47,7 +47,9 @@ def main():
     license_root.mkdir(exist_ok=True)
     notices = []
     for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6", "mutagen", "keyring",
-                 "pywin32-ctypes", "jaraco.classes", "jaraco.functools", "jaraco.context", "more-itertools"):
+                 "pywin32-ctypes", "jaraco.classes", "jaraco.functools", "jaraco.context", "more-itertools",
+                 "openai", "anthropic", "httpx2", "httpcore2", "anyio", "pydantic", "pydantic_core", "jiter",
+                 "typing_extensions", "typing-inspection", "annotated-types", "certifi", "idna", "distro", "sniffio", "truststore"):
         package = distribution(name)
         notices.append({"name": name, "version": package.version,
                         "license": package.metadata.get("License-Expression", package.metadata.get("License", "unreported"))})
@@ -62,7 +64,9 @@ def main():
     (bundle / "README.txt").write_text(f"music-sorter {__version__} local development prototype\nRun main.exe.\n"
                                       "OpenAI/Claude model-list connection checks are supported.\n"
                                       "File preview/apply/undo and relative playlist generation are supported.\n"
-                                      "API classification is under development; use copies to validate file changes.\n"
+                                      "Budgeted OpenAI/Claude synchronous and Batch classification are implemented.\n"
+                                      "Actual generation permission/usage and classification quality require account validation.\n"
+                                      "Use copies to validate file changes.\n"
                                       "Separate Windows validation and full distribution license review remain pending.\n", "utf-8")
     return 0
 

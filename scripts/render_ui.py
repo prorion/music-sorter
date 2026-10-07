@@ -64,6 +64,19 @@ def main():
             capture_links()
 
         def capture_links():
+            from music_sorter.ui.classify_dialog import ClassifyDialog
+            from music_sorter.ui.external_dialog import ExternalDialog
+            classify = ClassifyDialog(library, settings, [window.model.rows[0]['id']] if window.model.rows else [], {}, window)
+            classify.budget.setText('1')
+            classify.show()
+            app.processEvents()
+            classify.grab().save(str(args.output / 'classification-plan.png'))
+            classify.close()
+            external = ExternalDialog(library, settings, [], {}, window)
+            external.show()
+            app.processEvents()
+            external.grab().save(str(args.output / 'external-information.png'))
+            external.close()
             pending, _ = library.list_tracks(state="link_pending", limit=1)
             if pending:
                 links = LinkDialog(library, pending[0]["id"], window)

@@ -133,3 +133,33 @@ def test_mood_concept_filters_and_rejected_filter_keep_draft(qtbot, library, roo
     assert window.concept_filter.currentData() == "카페" and window.editor.dirty()
     monkeypatch.setattr("music_sorter.ui.main_window.QMessageBox.question", lambda *_: QMessageBox.StandardButton.Yes)
     window.discard_edits()
+
+
+def test_classification_plan_requires_budget_has_no_generation_and_locks_options(qtbot, library, root, song, fake_reader):
+    from music_sorter.ui.classify_dialog import ClassifyDialog
+    scan_library(library, root)
+    track = library.list_tracks()[0][0]
+    dialog = ClassifyDialog(library, Settings(music_root=str(root)), [track['id']], {})
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.budget.setText('1')
+    dialog.prepare()
+    qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
+    assert dialog.job_id and dialog.engine.summary(dialog.job_id)['counts'] == {'prepared': 1}
+    assert not dialog.purpose.isEnabled() and dialog.budget.isEnabled() and dialog.run_button.isEnabled()
+    assert dialog.engine.summary(dialog.job_id)['actual'] == 0
+    assert not dialog.collect_button.isEnabled()
+
+
+def test_external_missing_credentials_skips_and_does_not_classify(qtbot, library, root, song, fake_reader, monkeypatch):
+    from music_sorter.ui.external_dialog import ExternalDialog
+    scan_library(library, root)
+    track = library.list_tracks()[0][0]
+    monkeypatch.setattr('music_sorter.ui.external_dialog.CredentialStore.get', lambda *_: None)
+    dialog = ExternalDialog(library, Settings(music_root=str(root)), [track['id']], {})
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.start()
+    qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
+    assert dialog.table.rowCount() == 2 and dialog.start_button.isEnabled()
+    assert library.track(track['id'])['review_state'] == 'unclassified'
