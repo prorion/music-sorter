@@ -53,3 +53,19 @@ def test_evaluation_rejects_group_leak_between_splits():
     import pytest
     with pytest.raises(ValueError):
         scoring()([dict(hash='a', group='same', split='tune'), dict(hash='b', group='same', split='holdout')], {}, {})
+
+
+def test_tag_order_has_no_effect_and_all_unknown_gold_is_not_accuracy():
+    from music_sorter.classification import empty_classification
+    truth = empty_classification()
+    for field in truth.values():
+        field.update(source='manual', protected=True, status='unresolved', value=None)
+    prediction = deepcopy(truth)
+    for field in prediction.values():
+        field.update(source='llm', protected=False)
+    manifest = [dict(hash='a', group='g', split='holdout')]
+    assert not scoring()(manifest, {'a': truth}, {'a': prediction})['classification_accuracy_evaluated']
+    truth['mood'].update(value=['잔잔한', '감성적인'], status='confirmed')
+    prediction['mood'].update(value=['감성적인', '잔잔한'], status='confirmed')
+    result = scoring()(manifest, {'a': truth}, {'a': prediction})
+    assert result['classification_accuracy_evaluated'] and result['splits']['holdout']['axes']['mood']['conditional_exact_accuracy'] == 1

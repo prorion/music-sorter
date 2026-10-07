@@ -90,6 +90,8 @@ def match_musicbrainz(track, payload, tolerance=3):
 
 def match_lastfm(track, payload):
     if 'error' in payload:
+        if payload['error'] == 6:
+            return dict(state='not_found', evidence=[])
         raise ValueError('Last.fm 요청 실패. 키·권한·요청 제한을 확인하세요.')
     row = payload.get('track')
     if not isinstance(row, dict):
@@ -186,7 +188,8 @@ class ExternalLookup:
             else:
                 if mbids or isrcs:
                     identity, entity = (mbids[0], 'recording') if mbids else (isrcs[0], 'isrc')
-                    if not re.fullmatch(r'[A-Za-z0-9-]{12,36}', identity):
+                    pattern = r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}' if entity == 'recording' else r'[A-Z]{2}[A-Z0-9]{3}[0-9]{7}'
+                    if not re.fullmatch(pattern, identity):
                         raise ValueError('기존 녹음 ID 형식 오류')
                     params = dict(_entity=entity, _id=identity, inc='artist-credits+releases+tags', fmt='json')
                     payload = self.fetch(service, params)
@@ -220,7 +223,9 @@ class ExternalLookup:
             return json.loads(cached[0])
         payload = self.fetch('lastfm', dict(method='artist.getTopTags', artist=artist, autocorrect=0, format='json'))
         if 'error' in payload:
-            raise ValueError('Last.fm 아티스트 태그 조회 실패. 키·권한을 확인하세요.')
+            if payload['error'] != 6:
+                raise ValueError('Last.fm 아티스트 태그 조회 실패. 키·권한을 확인하세요.')
+            payload = {}
         row = payload.get('toptags') or {}
         if not isinstance(row, dict) or not isinstance(row.get('@attr', {}), dict):
             raise ValueError('Last.fm 아티스트 응답 형식 오류')

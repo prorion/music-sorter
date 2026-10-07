@@ -271,3 +271,119 @@ def test_duplicate_archive_requires_whole_group(library, root, tagged):
     assert '전체' in engine.operations(partial)[0]['reason']
     whole = engine.preview(ids, organize=True, archive_duplicates=True)
     assert engine.operation_counts(whole) == {'planned': 2}
+
+
+def test_disk_full_before_replacement_preserves_original(library, root, tagged, monkeypatch):
+    import errno
+    scan_library(library, root)
+    track = confirmed(library)
+    original = tagged.read_bytes()
+    engine = FileOperations(library, root)
+    job = engine.preview([track['id']], organize=True, write_genre=True)
+
+    def disk_full(source, target, offset, tag):
+        target.write_bytes(tag[:16])
+        raise OSError(errno.ENOSPC, 'test disk full')
+
+    monkeypatch.setattr('music_sorter.file_ops.write_replacement', disk_full)
+    assert engine.apply(job) == {'completed': 0, 'blocked': 1}
+    assert tagged.read_bytes() == original
+    assert library.track(track['id'])['hash'] == track['hash']
+    assert engine.operations(job)[0]['state'] == 'blocked'
+    assert list(engine.rollback.rglob('original.id3'))
+
+
+@pytest.mark.parametrize('action', ['replace', 'rename'])
+def test_access_denied_preserves_journal_and_explicit_resume(library, root, tagged, monkeypatch, action):
+    scan_library(library, root)
+    track = confirmed(library)
+    original = tagged.read_bytes()
+    engine = FileOperations(library, root)
+    job = engine.preview([track['id']], organize=True, write_genre=True)
+
+    def denied(*args, **kwargs):
+        raise PermissionError('test access denied')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(f'music_sorter.file_ops.os.{action}', denied)
+        assert engine.apply(job) == {'completed': 0, 'blocked': 1}
+    operation = engine.operations(job)[0]
+    assert operation['state'] == ('prepared' if action == 'replace' else 'tag_done')
+    assert tagged.exists()
+    assert library.track(track['id'])['hash'] == track['hash']
+    fresh = FileOperations(library, root)
+    assert fresh.resume(job) == {'completed': 1, 'blocked': 0}
+    assert len(list(engine.rollback.rglob('original.id3'))) == 1
+    fresh.undo(operation['id'])
+    assert tagged.read_bytes() == original
+
+
+@pytest.mark.parametrize('stage', ['prepared', 'tag_done'])
+def test_duplicate_archive_interruption_resumes_own_tag_change(library, root, tagged, stage):
+    copy = root / 'copy' / tagged.name
+    copy.parent.mkdir()
+    original = tagged.read_bytes()
+    copy.write_bytes(original)
+    scan_library(library, root)
+    ids = []
+    for track in library.list_tracks()[0]:
+        library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=[]), track['revision'])
+        ids.append(track['id'])
+    engine = FileOperations(library, root)
+    job = engine.preview(ids, organize=True, write_genre=True, archive_duplicates=True)
+
+    def crash(actual):
+        if actual == stage:
+            raise RuntimeError('test interruption')
+
+    with pytest.raises(RuntimeError):
+        engine.apply(job, fault=crash)
+    fresh = FileOperations(library, root)
+    assert fresh.resume(job) == {'completed': 1, 'blocked': 0}
+    assert fresh.apply(job) == {'completed': 1, 'blocked': 0}
+    for operation in fresh.operations(job):
+        fresh.undo(operation['id'])
+    assert tagged.read_bytes() == original and copy.read_bytes() == original
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows 파일 공유 모드 검증')
+def test_real_windows_open_handle_blocks_replace_and_resumes(library, root, tagged):
+    scan_library(library, root)
+    track = confirmed(library)
+    original = tagged.read_bytes()
+    engine = FileOperations(library, root)
+    job = engine.preview([track['id']], organize=True, write_genre=True)
+    with tagged.open('rb') as held:
+        assert engine.apply(job) == {'completed': 0, 'blocked': 1}
+        assert held.read() == original and tagged.read_bytes() == original
+    assert engine.operations(job)[0]['state'] == 'prepared'
+    assert engine.resume(job) == {'completed': 1, 'blocked': 0}
+    engine.undo(engine.operations(job)[0]['id'])
+    assert tagged.read_bytes() == original
+
+
+@pytest.mark.parametrize('modified', ['self', 'other'])
+def test_duplicate_archive_resume_still_blocks_external_change(library, root, tagged, modified):
+    copy = root / 'copy' / tagged.name
+    copy.parent.mkdir()
+    copy.write_bytes(tagged.read_bytes())
+    scan_library(library, root)
+    ids = []
+    for track in library.list_tracks()[0]:
+        library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=[]), track['revision'])
+        ids.append(track['id'])
+    engine = FileOperations(library, root)
+    job = engine.preview(ids, organize=True, write_genre=True, archive_duplicates=True)
+
+    def crash(stage):
+        if stage == 'tag_done':
+            raise RuntimeError('test interruption')
+
+    with pytest.raises(RuntimeError):
+        engine.apply(job, fault=crash)
+    operations = engine.operations(job)
+    path = Path(operations[0 if modified == 'self' else 1]['plan']['path'])
+    path.write_bytes(path.read_bytes() + b'external-modification')
+    before = {str(file): file.read_bytes() for file in (tagged, copy)}
+    assert FileOperations(library, root).resume(job) == {'completed': 0, 'blocked': 1}
+    assert {str(file): file.read_bytes() for file in (tagged, copy)} == before

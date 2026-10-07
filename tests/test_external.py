@@ -30,6 +30,13 @@ def test_album_conflict_and_lastfm_reference_only():
     assert result['state'] == 'reference' and 'recording_id' not in result['evidence'][0]
 
 
+def test_lastfm_not_found_differs_from_invalid_key():
+    import pytest
+    assert match_lastfm(track(), {'error': 6}) == dict(state='not_found', evidence=[])
+    with pytest.raises(ValueError):
+        match_lastfm(track(), {'error': 10})
+
+
 def test_cache_has_no_key_and_reuses_complete_response(library, root, song, fake_reader):
     scan_library(library, root)
     item = library.list_tracks()[0][0]

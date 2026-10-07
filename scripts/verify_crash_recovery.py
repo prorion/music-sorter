@@ -33,14 +33,17 @@ def child(folder, stage, job_id):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=Path)
+    parser.add_argument('--source', type=Path, help='읽기 전용 원본 MP3 파일 하나 (폴더 제외)')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--duplicate', action='store_true', help='두 사본을 중복 후보로 묶어 실제 중단·재개 검증')
     parser.add_argument('--child', choices=['prepared', 'tag_done', 'file_done', 'recorded', 'undo_prepared', 'undo_tag_done', 'undo_file_done'])
     parser.add_argument('--job')
     args = parser.parse_args()
     if args.child:
         child(args.output, args.child, args.job)
         return
+    if not args.source or not args.source.is_file() or args.source.suffix.lower() != '.mp3':
+        parser.error('--source에 MP3 파일 하나를 지정하세요.')
     source, output = args.source.resolve(), args.output.resolve()
     if output.exists() or source == output or source in output.parents:
         raise ValueError('원본 밖의 새 검증 폴더를 사용하세요.')
@@ -53,14 +56,22 @@ def main():
         root.mkdir(parents=True)
         copied = root / source.name
         shutil.copy2(source, copied)
+        copies = [copied]
+        if args.duplicate:
+            second = root / '같은 녹음 사본' / source.name
+            second.parent.mkdir()
+            shutil.copy2(source, second)
+            copies.append(second)
         library = Library(folder / 'user-data' / 'music-sorter.sqlite3')
         scan_library(library, root)
-        track = library.list_tracks()[0][0]
-        library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=[]), track['revision'])
+        tracks = library.list_tracks()[0]
+        for track in tracks:
+            library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=[]), track['revision'])
         engine = FileOperations(library, root)
-        job = engine.preview([track['id']], organize=True, rename=True, write_genre=True)
+        job = engine.preview([track['id'] for track in tracks], organize=True, rename=True, write_genre=True,
+                             archive_duplicates=args.duplicate)
         if stage.startswith('undo_'):
-            assert engine.apply(job) == {'completed': 1, 'blocked': 0}
+            assert engine.apply(job) == {'completed': len(tracks), 'blocked': 0}
         environment = dict(os.environ)
         environment['PYTHONPATH'] = os.pathsep.join((str(Path(__file__).resolve().parents[1] / 'src'), str(Path(sys.prefix) / 'Lib' / 'site-packages')))
         # Windows venv redirectors create another process. Launch the base interpreter
@@ -86,16 +97,20 @@ def main():
         recovery = resumed.recover()
         if recovery['pending']:
             assert resumed.resume(job) == {'completed': 1, 'blocked': 0}
-        operation = resumed.operations(job)[0]
-        if operation['state'] != 'undone':
-            assert operation['state'] == 'recorded'
-            resumed.undo(operation['id'])
-        current = fresh.track(track['id'])
-        assert current['path'] == str(copied.resolve()) and current['hash'] == original_hash and digest(copied) == original_hash
-        assert current['classification']['major']['protected']
-        reports.append(dict(stage=stage, child_killed=True, recovery=recovery, restored_exactly=True))
+        if resumed.operation_counts(job).get('planned'):
+            assert resumed.apply(job)['blocked'] == 0
+        for operation in resumed.operations(job):
+            if operation['state'] != 'undone':
+                assert operation['state'] == 'recorded'
+                resumed.undo(operation['id'])
+        for track in tracks:
+            current = fresh.track(track['id'])
+            assert current['path'] == track['path'] and current['hash'] == original_hash
+            assert current['classification']['major']['protected']
+        assert all(digest(path) == original_hash for path in copies)
+        reports.append(dict(stage=stage, child_killed=True, recovery=recovery, restored_exactly=True, copies=len(copies)))
     assert digest(source) == original_hash
-    report = dict(cases=reports, originals_unchanged=True, original_sha256=original_hash)
+    report = dict(cases=reports, duplicate_candidates=args.duplicate, originals_unchanged=True, original_sha256=original_hash)
     (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), 'utf-8')
     print(json.dumps(report))
 

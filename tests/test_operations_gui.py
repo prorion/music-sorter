@@ -47,3 +47,41 @@ def test_playlist_outputs_are_paged(qtbot, library, root):
     assert dialog.table.rowCount() == 200 and dialog.next.isEnabled()
     dialog.turn_page(1)
     assert dialog.table.rowCount() == 5 and not dialog.next.isEnabled() and dialog.previous.isEnabled()
+
+
+def test_external_cached_review_pages_cover_all_selected_tracks(qtbot, library, root, fake_reader):
+    from music_sorter.ui.external_dialog import ExternalDialog
+    for i in range(205):
+        (root / f'가수 {i:03} - 곡.mp3').write_bytes(f'fixture {i}'.encode())
+    scan_library(library, root)
+    ids = [track['id'] for track in library.list_tracks(limit=500)[0]]
+    dialog = ExternalDialog(library, Settings(), ids, {})
+    qtbot.addWidget(dialog)
+    assert len(dialog.rows) == 200 and dialog.next.isEnabled()
+    dialog.turn_page(1)
+    assert len(dialog.rows) == 200 and dialog.next.isEnabled()
+    dialog.turn_page(1)
+    assert len(dialog.rows) == 10 and not dialog.next.isEnabled()
+    assert dialog.table.item(0, 2).text() == '미조회'
+
+
+def test_uncertain_request_confirmation_gui_releases_only_explicit_selection(qtbot, library, root, song, fake_reader):
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtWidgets import QApplication, QCheckBox, QLineEdit, QPushButton, QTableWidget
+    from music_sorter.ui.classify_dialog import ClassifyDialog
+    from test_classifier import Client, prepared
+    engine, job, ids = prepared(library, root, song, fake_reader)
+    engine.run(job, Client(lambda *_: 'unknown'))
+    dialog = ClassifyDialog(library, Settings(), ids, {}, job_id=job)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.resolve_button.isEnabled()
+    def confirm():
+        modal = QApplication.activeModalWidget()
+        modal.findChild(QTableWidget).item(0, 0).setCheckState(Qt.CheckState.Checked)
+        modal.findChild(QCheckBox).setChecked(True)
+        modal.findChild(QLineEdit).setText('fixture provider confirmed no charge or processing')
+        next(button for button in modal.findChildren(QPushButton) if button.text() == '확인 기록 저장·예약 해제').click()
+    QTimer.singleShot(100, confirm)
+    dialog.resolve_unknown()
+    assert engine.summary(job)['reserved'] == 0 and not dialog.resolve_button.isEnabled()

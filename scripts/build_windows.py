@@ -41,11 +41,21 @@ def write_notices(bundle, version):
     if python_license.is_file():
         shutil.copy2(python_license, license_root / 'Python-LICENSE.txt')
     (bundle / 'DEPENDENCIES.json').write_text(json.dumps(sorted(notices, key=lambda p: p['name']), indent=2), 'utf-8')
-    (bundle / 'README.txt').write_text(f'music-sorter {version}\nRun main.exe; keep this whole folder.\n'
-        'File preview/apply/undo, relative playlists, budgeted OpenAI/Claude sync and Batch are implemented.\n'
-        'Settings include vault keys, explicit profiles, taxonomy, DB restore and verified data migration.\n'
-        'Use copies to validate file changes. Actual generation/quality and target-device compatibility require validation.\n'
-        'This is a locally verified build; separate Windows and full distribution notices review remain pending.\n', 'utf-8')
+    (bundle / 'README.txt').write_text(
+        f'music-sorter {version} · Windows x64\n\n'
+        '압축을 풀고 main.exe를 실행하세요. DLL·리소스를 포함한 폴더 전체가 필요합니다.\n'
+        '일반 설정과 음악 DB는 사용자 앱 데이터에, API 키는 Windows 자격 증명 저장소에 보관합니다.\n'
+        '이전 버전을 종료하고 새 버전을 실행하면 기존 데이터와 등록 키를 사용합니다.\n\n'
+        '1. 설정 → 음악 라이브러리에서 폴더를 등록하고 폴더 스캔을 실행합니다.\n'
+        '2. 설정 → LLM / API 연결에서 OpenAI·Claude 키를 등록하고 모델을 조회합니다.\n'
+        '3. 분류 실행에서 대상·전송 입력·작업 예산을 확인하고 별도로 제출합니다.\n'
+        '4. 파일 정리 미리보기에서 변경 경로를 확인한 뒤 실제 적용을 선택합니다.\n'
+        '5. 작업 이력에서 중단 작업을 재개하거나 파일 변경을 되돌릴 수 있습니다.\n'
+        '6. 재생목록 메뉴에서 태그 목록과 조합 목록을 생성합니다.\n\n'
+        '파일 변경의 첫 검증에는 별도 음악 복사본을 사용하세요.\n'
+        '실제 유료 생성·분류 품질·대상 재생 앱·별도 Windows 환경 검증은 남아 있습니다.\n'
+        '설치 의존성과 고지는 DEPENDENCIES.json 및 third-party-licenses 폴더에 포함합니다.\n',
+        'utf-8')
 
 
 def main():

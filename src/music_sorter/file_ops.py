@@ -206,7 +206,7 @@ class FileOperations:
             for path in old[7:]:
                 path.unlink()  # Only program-owned daily DB backups, after verified new backup.
 
-    def _validate_current(self, plan):
+    def _validate_current(self, plan, *, resuming_hash=None):
         track = self.library.track(plan["id"])
         if any(track[key] != plan[key] for key in ("path", "hash", "revision", "classification")) or track["file_state"] != "ready":
             raise ValueError("미리보기 이후 파일·분류 판정이 달라졌습니다. 새 미리보기가 필요합니다.")
@@ -216,7 +216,12 @@ class FileOperations:
         if current.get('state') == 'pending':
             for member_id in current['token'].split(':'):
                 member = self.library.track(member_id)
-                if member['file_state'] != 'ready' or digest(inside_root(self.root, Path(member['path']))) != member['hash']:
+                expected = {member['hash']}
+                if member_id == plan['id'] and resuming_hash is not None:
+                    # Only this journal's verified tag result may differ from its DB hash.
+                    # Other candidates must still match their current DB observations.
+                    expected.add(resuming_hash)
+                if member['file_state'] != 'ready' or digest(inside_root(self.root, Path(member['path']))) not in expected:
                     raise ValueError('중복 후보 그룹의 파일 상태가 달라졌습니다.')
         return track
 
@@ -360,7 +365,7 @@ class FileOperations:
             try:
                 with self.library._write_lock:
                     plan, result = operation['plan'], operation['result']
-                    self._validate_current(plan)
+                    self._validate_current(plan, resuming_hash=result['hash'])
                     source = inside_root(self.root, Path(plan['path']))
                     destination = inside_root(self.root, Path(plan['destination']))
                     if path_key(source) != path_key(destination) and destination.exists():

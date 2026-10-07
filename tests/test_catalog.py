@@ -48,7 +48,8 @@ def test_retired_tag_is_retained_for_editor_but_excluded_from_new_schema(tmp_pat
         TAXONOMY.update(catalog)
         assert '카페' not in options('concept') and '카페' in options('concept', current=['카페'])
         fields = response_schema()['properties']['tracks']['items']['properties']['classification']['properties']
-        assert '카페' not in fields['concept']['properties']['value']['items']['enum']
+        concrete = next(branch for branch in fields['concept']['properties']['value']['anyOf'] if branch['type'] == 'array')
+        assert '카페' not in concrete['items']['enum']
     finally:
         TAXONOMY.clear()
         TAXONOMY.update(original)

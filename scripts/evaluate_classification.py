@@ -51,7 +51,8 @@ def score(manifest, gold, predictions):
                 metric['known_gold'] += 1
                 confirmed = actual['status'] == 'confirmed'
                 metric['confirmed_predictions' if confirmed else 'unresolved_predictions'] += 1
-                if confirmed and actual['value'] == expected['value']:
+                equal = set(actual['value'] or []) == set(expected['value']) if axis in {'subgenre', 'mood', 'concept'} else actual['value'] == expected['value']
+                if confirmed and equal:
                     metric['correct'] += 1
                 if axis in {'subgenre', 'mood', 'concept'}:
                     target = set(expected['value'])
@@ -74,7 +75,7 @@ def score(manifest, gold, predictions):
                 metric['conditional_accuracy_wilson95'] = [(fraction + 1.96 ** 2 / (2 * completed) - radius) / denominator,
                                                          (fraction + 1.96 ** 2 / (2 * completed) + radius) / denominator]
         report['splits'][split] = dict(human_reviewed=reviewed, independently_predicted_pairs=pairs, axes=metrics)
-    report['classification_accuracy_evaluated'] = bool(report['splits']['holdout']['independently_predicted_pairs'])
+    report['classification_accuracy_evaluated'] = any(metric['known_gold'] for metric in report['splits']['holdout']['axes'].values())
     return report
 
 
