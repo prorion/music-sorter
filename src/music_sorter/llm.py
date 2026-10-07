@@ -130,7 +130,7 @@ def parse_tracks(text, expected_ids, taxonomy=None):
 
 PRICES = {
     ('anthropic', 'claude-haiku-4-5'): ('1', '5', '0.1', 'https://platform.claude.com/docs/en/about-claude/pricing'),
-    ('anthropic', 'claude-sonnet-5-5'): ('2', '10', '0.2', 'https://platform.claude.com/docs/en/about-claude/pricing'),
+    ('anthropic', 'claude-sonnet-5-5'): ('2', '10', '0.1', 'https://platform.claude.com/docs/en/about-claude/pricing'),
     ('openai', 'gpt-5.4-mini'): ('0.75', '4.5', '0.075', 'https://developers.openai.com/api/docs/models/gpt-5.4-mini'),
 }
 PRICE_CHECKED = '2026-10-08'
@@ -320,7 +320,7 @@ class ProviderClient:
                 for response in self.client.messages.batches.results(remote_id):
                     data = response.model_dump(mode='json') if not isinstance(response, dict) else response
                     result = data['result']
-                    yield data['custom_id'], self.normalize(result['message']) if result['type'] == 'succeeded' else None
+                    yield data['custom_id'], self.normalize(result['message']) if result['type'] == 'succeeded' else {'outcome': result['type']}
             else:
                 for file_id in files:
                     with self.client.files.with_streaming_response.content(file_id) as response:

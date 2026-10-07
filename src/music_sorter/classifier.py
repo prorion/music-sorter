@@ -243,12 +243,22 @@ class Classifier:
     def _fail(self, request_id, category):
         with self.library.connection(write=True) as db:
             row = db.execute('SELECT * FROM llm_requests WHERE id=?', (request_id,)).fetchone()
-            state = 'unknown' if category == 'unknown' else 'failed'
-            db.execute('UPDATE llm_requests SET state=?,reason=? WHERE id=?', (state, str(ProviderError(category)), request_id))
+            state = 'unknown' if category == 'unknown' else 'cancelled' if category == 'cancelled' else 'failed'
+            reason = {'cancelled': '원격 Batch에서 미처리 취소가 확인되었습니다. 비용 예약을 해제했습니다.',
+                      'expired': '원격 Batch의 처리 시간이 만료되었습니다. 미처리 요청의 비용 예약을 해제했습니다.'}.get(category, str(ProviderError(category)))
+            db.execute('UPDATE llm_requests SET state=?,reason=? WHERE id=?', (state, reason, request_id))
             if state != 'unknown':
                 db.execute('UPDATE llm_jobs SET reserved=reserved-? WHERE id=?', (row['reserved'], row['job_id']))
             db.executemany('UPDATE llm_targets SET state=?,reason=? WHERE job_id=? AND track_id=?',
-                           [(state, str(ProviderError(category)), row['job_id'], i) for i in json.loads(row['target_ids'])])
+                           [(state, reason, row['job_id'], i) for i in json.loads(row['target_ids'])])
+
+    def _record_progress(self, job_id):
+        with self.library.connection(write=True) as db:
+            counts = {row[0]: row[1] for row in db.execute('SELECT state,count(*) FROM llm_targets WHERE job_id=? GROUP BY state', (job_id,))}
+            db.execute('UPDATE jobs SET processed=?,failed=? WHERE id=?',
+                       (counts.get('completed', 0) + counts.get('proposal', 0),
+                        counts.get('failed', 0) + counts.get('blocked', 0), job_id))
+        return counts
 
     def _apply_one(self, job_id, track_id, result):
         with self.library.connection() as db:
@@ -392,7 +402,10 @@ class Classifier:
                     raise ValueError('이 작업에 속하지 않는 Batch 결과입니다.')
                 if request[0] != 'remote':
                     continue
-                if response:
+                if response and 'outcome' in response:
+                    category = {'canceled': 'cancelled', 'expired': 'expired', 'errored': 'invalid'}.get(response['outcome'], 'unknown')
+                    self._fail(request_id, category)
+                elif response:
                     self._settle(request_id, response)
                     self.apply_received(job_id)
                 else:
@@ -401,6 +414,13 @@ class Classifier:
             with self.library.connection(write=True) as db:
                 db.execute("UPDATE llm_requests SET reason=? WHERE job_id=? AND remote_id=? AND state='remote'",
                            ('종료 상태지만 결과·사용량 미확인. 예약 유지, 다음 상태 확인에서 다시 수집합니다.', job_id, remote_id))
+        counts = self._record_progress(job_id)
+        if counts and not any(counts.get(state) for state in ACTIVE):
+            state = 'cancelled' if set(counts) == {'cancelled'} else 'partial' if any(counts.get(s) for s in ('failed', 'blocked', 'proposal', 'cancelled')) else 'completed'
+            with self.library.connection() as db:
+                previous = db.execute('SELECT state FROM jobs WHERE id=?', (job_id,)).fetchone()[0]
+            if previous != state:
+                self.library.job_state(job_id, state, 'Batch 응답 수집 완료. 음악 파일 변경 없음.')
         return self.summary(job_id)
 
     def cancel_remote(self, job_id, client):
@@ -491,6 +511,7 @@ class Classifier:
                 progress(completed, failed)
         else:
             summary = self.summary(job_id)
-            state = 'partial' if any(summary['counts'].get(x) for x in ('failed', 'unknown', 'proposal', 'remote')) else 'completed'
+            state = 'partial' if any(summary['counts'].get(x) for x in ('failed', 'blocked', 'cancelled', 'unknown', 'proposal', 'remote')) else 'completed'
             self.library.job_state(job_id, state, '분류 응답 처리 완료. 음악 파일 변경 없음.')
+        self._record_progress(job_id)
         return self.summary(job_id)

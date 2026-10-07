@@ -121,6 +121,15 @@ def test_pricing_ceil_unknown_model_and_batch_discount():
     assert price('anthropic', 'claude-haiku-4-5', 'batch')['input'] == '0.5'
     with pytest.raises(ValueError):
         price('anthropic', 'unknown-model')
+    assert price('anthropic', 'claude-sonnet-5-5')['cached'] == '0.1'
+    assert price('anthropic', 'claude-sonnet-5-5', 'batch')['cached'] == '0.05'
+
+
+@pytest.mark.parametrize('outcome', ['canceled', 'errored', 'expired', 'future-outcome'])
+def test_claude_batch_non_success_outcome_is_not_discarded(outcome):
+    batches = SimpleNamespace(results=lambda _: iter([{'custom_id': 'request1', 'result': {'type': outcome}}]))
+    client = ProviderClient('anthropic', None, client=SimpleNamespace(messages=SimpleNamespace(batches=batches)))
+    assert list(client.batch_results('batch1')) == [('request1', {'outcome': outcome})]
 
 
 def test_error_messages_never_expose_provider_body_or_key():

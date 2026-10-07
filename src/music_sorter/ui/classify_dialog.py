@@ -235,7 +235,7 @@ class ClassifyDialog(QDialog):
     def load(self):
         self.rows = self.engine.rows(self.job_id, limit=200, offset=self.offset) if self.job_id else []
         self.table.setRowCount(len(self.rows))
-        states = dict(prepared='미제출', blocked='제출 보류', cancelled='계획 취소', sending='전송 중', unknown='처리 확인 필요', received='응답 수신', remote='원격 처리', completed='완료', failed='실패', proposal='검토 제안')
+        states = dict(prepared='미제출', blocked='제출 보류', cancelled='취소', sending='전송 중', unknown='처리 확인 필요', received='응답 수신', remote='원격 처리', completed='완료', failed='실패', proposal='검토 제안')
         for i, row in enumerate(self.rows):
             inputs = json.loads(row['input'])
             for j, value in enumerate((inputs['title'] + ' · ' + inputs['artist'], states.get(row['state'], row['state']), row['reason'], '두 번 클릭 · 입력 JSON/가사/근거')):

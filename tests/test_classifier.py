@@ -41,6 +41,9 @@ def test_budget_reservation_completion_and_no_paid_prepare(library, root, song, 
     assert result['actual'] == 2600 and result['reserved'] == 0
     assert result['counts'] == {'completed': 1} and client.calls == 1
     assert library.track(ids[0])['review_state'] == 'confirmed'
+    with library.connection() as db:
+        history = dict(db.execute('SELECT * FROM jobs WHERE id=?', (job,)).fetchone())
+    assert (history['state'], history['processed'], history['failed']) == ('completed', 1, 0)
     engine.run(job, client)
     assert client.calls == 1
 
@@ -62,6 +65,9 @@ def test_file_change_before_submission_sends_nothing(library, root, song, fake_r
     result = engine.run(job, client)
     assert client.calls == 0 and result['counts'] == {'blocked': 1}
     assert result['actual'] == result['reserved'] == 0
+    with library.connection() as db:
+        history = dict(db.execute('SELECT * FROM jobs WHERE id=?', (job,)).fetchone())
+    assert (history['state'], history['processed'], history['failed']) == ('partial', 0, 1)
 
 
 def test_abandoned_plan_releases_track_for_new_model_plan(library, root, song, fake_reader):
@@ -250,8 +256,53 @@ def test_batch_persist_collect_repeated_without_double_cost(library, root, song,
     assert fresh.summary(job)['reserved'] > 0 and client.cancelled == 'batch1'
     result = fresh.collect_batch(job, client)
     assert result['counts'] == {'completed': 1} and result['reserved'] == 0 and result['actual'] == 1300
+    history = library.jobs()[0]
+    assert (history['state'], history['processed'], history['failed']) == ('completed', 1, 0)
     again = fresh.collect_batch(job, client)
     assert again['actual'] == 1300 and client.calls == 1
+    assert library.jobs()[0]['ended_at'] == history['ended_at']
+
+
+@pytest.mark.parametrize('outcome,state,job_state,held', [
+    ('canceled', 'cancelled', 'cancelled', False),
+    ('expired', 'failed', 'partial', False),
+    ('errored', 'failed', 'partial', False),
+    ('future-outcome', 'unknown', 'paused', True),
+])
+def test_batch_terminal_outcomes_preserve_reservations_and_history(library, root, song, fake_reader, outcome, state, job_state, held):
+    scan_library(library, root)
+    engine = Classifier(library)
+    job = engine.prepare([library.list_tracks()[0][0]['id']], provider='anthropic', model='claude-haiku-4-5', budget=1, execution='batch')
+    class Outcome(BatchClient):
+        def batch_results(self, *_):
+            yield self.requests[0]['id'], {'outcome': outcome}
+    client = Outcome()
+    engine.submit_batch(job, client)
+    reserved = engine.summary(job)['reserved']
+    result = engine.collect_batch(job, client)
+    assert result['counts'] == {state: 1} and result['actual'] == 0
+    assert result['reserved'] == (reserved if held else 0)
+    history = library.jobs()[0]
+    assert history['state'] == job_state and history['processed'] == 0
+    assert history['failed'] == int(state == 'failed')
+    engine.collect_batch(job, client)
+    assert engine.summary(job)['reserved'] == result['reserved']
+    assert library.jobs()[0]['ended_at'] == history['ended_at']
+
+
+def test_batch_ended_without_results_does_not_finish_job(library, root, song, fake_reader):
+    scan_library(library, root)
+    engine = Classifier(library)
+    job = engine.prepare([library.list_tracks()[0][0]['id']], provider='anthropic', model='claude-haiku-4-5', budget=1, execution='batch')
+    class Missing(BatchClient):
+        def batch_results(self, *_):
+            return iter(())
+    client = Missing()
+    engine.submit_batch(job, client)
+    reserved = engine.summary(job)['reserved']
+    result = engine.collect_batch(job, client)
+    assert result['counts'] == {'remote': 1} and result['reserved'] == reserved
+    assert library.jobs()[0]['state'] == 'paused' and library.jobs()[0]['ended_at'] is None
 
 
 def test_batch_creation_unknown_never_recreates(library, root, song, fake_reader):

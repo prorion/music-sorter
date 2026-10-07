@@ -54,7 +54,8 @@ def write_notices(bundle, version):
         '6. 재생목록 메뉴에서 태그 목록과 조합 목록을 생성합니다.\n\n'
         '파일 변경의 첫 검증에는 별도 음악 복사본을 사용하세요.\n'
         '기본 M3U8은 곰오디오의 한글 경로·장르·재생을 확인했습니다.\n'
-        '실제 유료 생성·분류 품질·삼성 뮤직·별도 Windows 환경 검증은 남아 있습니다.\n'
+        'Claude 실제 동기 생성·Batch 제출/수집·취소와 응답 사용량 기반 비용을 검증했습니다.\n'
+        '분류 정답률·OpenAI 실제 생성·삼성 뮤직·별도 Windows 환경 검증은 남아 있습니다.\n'
         '설치 의존성과 고지는 DEPENDENCIES.json 및 third-party-licenses 폴더에 포함합니다.\n',
         'utf-8')
 
