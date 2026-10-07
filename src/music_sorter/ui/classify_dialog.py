@@ -62,6 +62,9 @@ class ClassifyDialog(QDialog):
         self.abandon_button = QPushButton('미제출 계획 취소')
         self.abandon_button.clicked.connect(self.abandon)
         pages.addWidget(self.abandon_button)
+        self.resolve_button = QPushButton('처리 불확실 요청 확인')
+        self.resolve_button.clicked.connect(self.resolve_unknown)
+        pages.addWidget(self.resolve_button)
         pages.addStretch()
         pages.addWidget(self.next)
         layout.addLayout(pages)
@@ -84,10 +87,15 @@ class ClassifyDialog(QDialog):
         self.stop_button.clicked.connect(lambda: self.worker.control.cancelled.set() if self.worker else None)
         close = QPushButton('닫기')
         close.clicked.connect(self.reject)
-        for widget in (self.prepare_button, self.run_button, self.collect_button, self.cancel_remote_button, self.retry_button, self.stop_button, close):
+        for widget in (self.prepare_button, self.run_button, self.collect_button, close):
             buttons.addWidget(widget)
         layout.addLayout(buttons)
-        self.conditional_buttons = (self.run_button, self.collect_button, self.cancel_remote_button, self.retry_button)
+        controls = QHBoxLayout()
+        for widget in (self.cancel_remote_button, self.retry_button, self.stop_button):
+            controls.addWidget(widget)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.conditional_buttons = (self.run_button, self.collect_button, self.cancel_remote_button, self.retry_button, self.resolve_button)
         self.controls = (self.scope, self.purpose, self.execution, self.budget, self.lyrics, self.prepare_button)
         self.stop_button.setEnabled(False)
         self.purpose.currentIndexChanged.connect(self.model_changed)
@@ -248,6 +256,7 @@ class ClassifyDialog(QDialog):
             self.previous.setEnabled(self.offset > 0)
             self.next.setEnabled(self.offset + len(self.rows) < sum(summary['counts'].values()))
             self.abandon_button.setEnabled(bool(summary['counts'].get('prepared')) and not self.worker)
+            self.resolve_button.setEnabled(bool(summary['counts'].get('unknown')) and not self.worker)
         else:
             self.abandon_button.setEnabled(False)
             for button in self.conditional_buttons:
@@ -286,6 +295,60 @@ class ClassifyDialog(QDialog):
     def turn_page(self, delta):
         self.offset = max(0, self.offset + delta * 200)
         self.load()
+
+    def resolve_unknown(self):
+        if self.worker or not self.job_id:
+            return
+        requests = self.engine.uncertain_requests(self.job_id)
+        if not requests:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('처리 여부 확인 · 미완료 예약')
+        dialog.resize(920, 580)
+        layout = QVBoxLayout(dialog)
+        note = QLabel('제공자의 요청 기록·과금 내역에서 미처리와 미과금을 직접 확인한 요청만 선택하세요.\n확인할 수 없거나 이미 처리됐으면 예약을 유지합니다. 이 화면은 재전송하지 않습니다.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        table = QTableWidget(len(requests), 4)
+        table.setHorizontalHeaderLabels(['선택·요청 ID', '원격 ID', '예약 USD', '요청 시각'])
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setColumnWidth(0, 330)
+        for i, request in enumerate(requests):
+            item = QTableWidgetItem(request['id'])
+            item.setCheckState(Qt.CheckState.Unchecked)
+            table.setItem(i, 0, item)
+            for j, value in enumerate((request['remote_id'] or '미확인', f"{request['reserved']/1000000:.6f}", request['created_at']), 1):
+                table.setItem(i, j, QTableWidgetItem(value))
+        layout.addWidget(table, 1)
+        confirmed = QCheckBox('선택한 요청의 미처리·미과금을 제공자에서 확인했습니다')
+        layout.addWidget(confirmed)
+        reason = QLineEdit()
+        reason.setMaxLength(600)
+        reason.setPlaceholderText('확인 근거·시각·문의 번호 (API 키 입력 제외)')
+        layout.addWidget(reason)
+        status = QLabel('확인 완료한 요청의 예약만 해제합니다. 새 유료 작업은 별도 계획이 필요합니다.')
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        buttons = QHBoxLayout()
+        apply = QPushButton('확인 기록 저장·예약 해제')
+        close = QPushButton('예약 유지·닫기')
+        close.clicked.connect(dialog.reject)
+        def save():
+            ids = [request['id'] for i, request in enumerate(requests) if table.item(i, 0).checkState() == Qt.CheckState.Checked]
+            try:
+                result = self.engine.confirm_unprocessed(self.job_id, ids, reason.text(), confirmed=confirmed.isChecked())
+            except ValueError as error:
+                status.setText(str(error))
+                return
+            self.status.setText(f"확인 {result['requests']}요청 · 예약 US${result['released']/1000000:.6f} 해제 · 자동 재전송 없음")
+            dialog.accept()
+            self.load()
+        apply.clicked.connect(save)
+        buttons.addWidget(apply)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        dialog.exec()
 
     def reject(self):
         if not self.worker:

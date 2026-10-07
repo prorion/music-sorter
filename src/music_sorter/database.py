@@ -248,8 +248,8 @@ class Library:
                 if old:
                     if old["hash"] == item["hash"]:
                         state = "link_pending" if old["file_state"] == "link_pending" else "ready"
-                        db.execute("UPDATE tracks SET file_state=?,size=?,mtime_ns=?,observed_json=NULL WHERE id=?",
-                                   (state, item["size"], item["mtime_ns"], old["id"]))
+                        db.execute("UPDATE tracks SET file_state=?,size=?,mtime_ns=?,observed_json=NULL,metadata_json=json_set(metadata_json,'$.recording_ids',json(?),'$.isrcs',json(?)) WHERE id=?",
+                                   (state, item["size"], item["mtime_ns"], encode(item.get('recording_ids', [])), encode(item.get('isrcs', [])), old["id"]))
                         counts["unchanged"] += 1
                     else:
                         db.execute("UPDATE tracks SET file_state='external_change',observed_json=? WHERE id=?",

@@ -12,6 +12,7 @@ from .database import encode, now
 from .llm import PROMPT_VERSION, SYSTEM, ProviderError, cache_key, cost_micro, input_bound, parse_tracks, price, response_schema, track_input
 from .classification import TAXONOMY
 from .tag_io import digest
+from .llm import reservation_cost, usage_cost
 
 
 PURPOSES = {'classify', 'escalate', 'reclassify'}
@@ -75,7 +76,7 @@ class Classifier:
                        execution=execution, include_lyrics=include_lyrics, workspace=workspace, max_tokens_per_track=max_output_tokens_per_track,
                        tracks_per_request=tracks_per_request, timeout_seconds=timeout_seconds, max_retries=max_retries)
         from .catalog import active_catalog
-        options['contract'] = dict(prompt_version=PROMPT_VERSION, system=SYSTEM, taxonomy=active_catalog(), schema=response_schema())
+        options['contract'] = dict(prompt_version=PROMPT_VERSION, system=SYSTEM, taxonomy=active_catalog(), schema=response_schema(), prompt_cache=provider == 'anthropic')
         job_id = self.library.start_job('llm')
         self.library.job_state(job_id, 'prepared', '입력·예산 계획만 준비됨. 유료 제출 전입니다.')
         with self.library.connection(write=True) as db:
@@ -146,7 +147,7 @@ class Classifier:
         estimate = 0
         rows = self.rows(job_id, 'prepared', item['options'].get('tracks_per_request', 20))
         if rows:
-            bound = cost_micro(item['options']['pricing'], input_bound([json.loads(row['input']) for row in rows]), len(rows) * item['options']['max_tokens_per_track'])
+            bound = reservation_cost(item['options'], input_bound([json.loads(row['input']) for row in rows]), len(rows) * item['options']['max_tokens_per_track'])
             estimate = (sum(counts.values()) + len(rows) - 1) // len(rows) * bound
         item['reservation_estimate'] = estimate
         return item
@@ -184,6 +185,31 @@ class Classifier:
         self.library.job_state(job_id, 'cancelled', f'미제출 {count}곡 취소. 기존 원격·불확실 요청과 예약은 유지합니다.')
         return count
 
+    def uncertain_requests(self, job_id):
+        with self.library.connection() as db:
+            return [dict(row) for row in db.execute("SELECT id,remote_id,reserved,reason,created_at FROM llm_requests WHERE job_id=? AND state='unknown' ORDER BY created_at LIMIT 200", (job_id,))]
+
+    def confirm_unprocessed(self, job_id, request_ids, reason, *, confirmed=False):
+        if confirmed is not True or not request_ids or not reason.strip() or len(reason) > 600:
+            raise ValueError('제공자의 미처리·미과금 확인과 근거가 필요합니다.')
+        stamp = now()
+        count = released = 0
+        with self.library.connection(write=True) as db:
+            for request_id in dict.fromkeys(request_ids):
+                row = db.execute("SELECT * FROM llm_requests WHERE job_id=? AND id=? AND state='unknown'", (job_id, request_id)).fetchone()
+                if not row:
+                    raise ValueError('요청 상태가 바뀌었습니다. 다시 확인하세요.')
+                note = '사용자가 제공자 미처리·미과금을 확인함 · ' + stamp + ' · ' + reason.strip()
+                db.execute("UPDATE llm_requests SET state='cancelled',reason=? WHERE id=?", (note, request_id))
+                db.executemany("UPDATE llm_targets SET state='cancelled',reason=? WHERE job_id=? AND track_id=? AND state='unknown'", [(note, job_id, i) for i in json.loads(row['target_ids'])])
+                released += row['reserved']
+                count += 1
+            db.execute('UPDATE llm_jobs SET reserved=reserved-? WHERE id=? AND reserved>=?', (released, job_id, released))
+            if db.execute('SELECT changes()').fetchone()[0] != 1:
+                raise ValueError('예약 금액이 맞지 않습니다. 데이터를 확인하세요.')
+        self.library.job_state(job_id, 'paused', f'제공자 미처리·미과금 확인 {count}요청. 자동 재전송 없음. 새 계획으로 실행하세요.')
+        return dict(requests=count, released=released)
+
     def _ready_rows(self, job_id, rows):
         usable = []
         for target in rows:
@@ -208,7 +234,7 @@ class Classifier:
                 return
             job = db.execute('SELECT * FROM llm_jobs WHERE id=?', (request['job_id'],)).fetchone()
             usage = response['usage']
-            amount = cost_micro(json.loads(job['options'])['pricing'], usage['input'], usage['output'], usage['cached'], usage['cache_write'])
+            amount = usage_cost(json.loads(job['options']), usage)
             db.execute("UPDATE llm_requests SET state='received',actual=?,response=?,remote_id=? WHERE id=?",
                        (amount, encode(response), response.get('id'), request_id))
             db.execute('UPDATE llm_jobs SET reserved=reserved-?,actual=actual+? WHERE id=?', (request['reserved'], amount, request['job_id']))
@@ -317,7 +343,7 @@ class Classifier:
                     raise ValueError('문맥·가격 구간 제한. 더 작은 묶음이 필요합니다.')
             except (InterruptedError, ProviderError):
                 break
-            amount = cost_micro(options['pricing'], tokens, len(rows) * options['max_tokens_per_track'])
+            amount = reservation_cost(options, tokens, len(rows) * options['max_tokens_per_track'])
             request_id = self._reserve(job_id, rows, amount)
             if request_id is None:
                 break
@@ -426,7 +452,7 @@ class Classifier:
             except ProviderError as error:
                 self.library.job_state(job_id, 'paused', '입력 계량 실패: ' + str(error))
                 break
-            reservation = cost_micro(options['pricing'], tokens, len(uncached) * options['max_tokens_per_track'])
+            reservation = reservation_cost(options, tokens, len(uncached) * options['max_tokens_per_track'])
             request_id = self._reserve(job_id, uncached, reservation)
             if request_id is None:
                 self.library.job_state(job_id, 'paused', '예산 상한. 예산을 변경한 후 명시적으로 재개하세요.')

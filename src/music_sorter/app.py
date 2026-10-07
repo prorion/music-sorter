@@ -106,6 +106,8 @@ def main(argv=None) -> int:
                     app.exit(2)
                 elif args.smoke_media and not (media_loaded and advanced):
                     app.exit(3)
+                elif sdk_report and not sdk_report['completed']:
+                    app.exit(5)
                 elif any(value["status"] == "error" for value in api_report.values()):
                     app.exit(4)
                 else:
@@ -139,6 +141,10 @@ def main(argv=None) -> int:
                 QTimer.singleShot(2000 if args.smoke_media else 700, snapshot)
         return app.exec()
     except Exception as error:
+        if args.smoke_screen:
+            args.smoke_screen.parent.mkdir(parents=True, exist_ok=True)
+            args.smoke_screen.with_suffix('.json').write_text(json.dumps(dict(rendered=False, error_type=type(error).__name__), indent=2), 'utf-8')
+            return 1
         QMessageBox.critical(None, "시작 보류", f"로컬 설정·DB를 열지 못했습니다 ({type(error).__name__}). 원본 데이터를 보존한 채 설정·DB 상태를 확인하세요.")
         return 1
     finally:

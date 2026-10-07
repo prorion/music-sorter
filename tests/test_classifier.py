@@ -101,6 +101,48 @@ def test_unknown_holds_reservation_and_prevents_second_job(library, root, song, 
     assert client.calls == 1
 
 
+def test_unknown_requires_confirmation_and_preserves_audit(library, root, song, fake_reader):
+    engine, job, ids = prepared(library, root, song, fake_reader)
+    client = Client(lambda *_: 'unknown')
+    engine.run(job, client)
+    request = engine.uncertain_requests(job)[0]
+    for confirmed, reason in [(False, 'fixture provider check'), (True, '')]:
+        with pytest.raises(ValueError):
+            engine.confirm_unprocessed(job, [request['id']], reason, confirmed=confirmed)
+        assert engine.summary(job)['reserved'] == request['reserved']
+    result = engine.confirm_unprocessed(job, [request['id']], 'fixture provider confirmed no processing or charge', confirmed=True)
+    assert result['released'] == request['reserved'] and engine.summary(job)['reserved'] == 0
+    assert engine.summary(job)['counts'] == {'cancelled': 1} and client.calls == 1
+    with pytest.raises(ValueError):
+        engine.confirm_unprocessed(job, [request['id']], 'again', confirmed=True)
+    fresh = engine.prepare(ids, provider='anthropic', model='claude-haiku-4-5', budget='1')
+    assert engine.summary(fresh)['counts'] == {'prepared': 1}
+    with library.connection() as db:
+        audit = db.execute('SELECT reason FROM llm_requests WHERE id=?', (request['id'],)).fetchone()[0]
+    assert 'fixture provider' in audit
+
+
+def test_unknown_resolution_rolls_back_on_stale_request(library, root, song, fake_reader):
+    engine, job, _ = prepared(library, root, song, fake_reader)
+    engine.run(job, Client(lambda *_: 'unknown'))
+    request = engine.uncertain_requests(job)[0]
+    with pytest.raises(ValueError):
+        engine.confirm_unprocessed(job, [request['id'], 'not-in-this-job'], 'provider check', confirmed=True)
+    assert engine.summary(job)['reserved'] == request['reserved']
+    assert engine.uncertain_requests(job)[0]['id'] == request['id']
+
+
+def test_cache_write_premium_reserved_before_generation(library, root, song, fake_reader):
+    from music_sorter.llm import reservation_cost, usage_cost
+    engine, job, _ = prepared(library, root, song, fake_reader)
+    options = engine.job(job)['options']
+    assert options['contract']['prompt_cache'] is True
+    assert reservation_cost(options, 1000, 100) == 1750
+    assert usage_cost(options, dict(input=100, output=100, cached=500, cache_write=400)) == 1150
+    old = dict(options, contract={})
+    assert reservation_cost(old, 1000, 100) == 1500
+
+
 def test_429_max_four_auth_one_and_preserves_classification(library, root, song, fake_reader):
     engine, job, ids = prepared(library, root, song, fake_reader)
     client = Client(lambda *_: 'retryable')

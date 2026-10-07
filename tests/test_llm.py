@@ -141,3 +141,33 @@ def test_missing_usage_retains_uncertain_state_and_missing_key_no_env_fallback(m
     monkeypatch.setenv('OPENAI_API_KEY', 'test-environment-key')
     with pytest.raises(ProviderError):
         ProviderClient('openai', '')
+
+
+def test_prompt_cache_prefix_does_not_include_track_metadata():
+    client = ProviderClient('anthropic', None, client=SimpleNamespace())
+    client.contract = dict(system='fixed instruction', taxonomy={'major': {'가요': ['발라드']}}, schema=response_schema(), prompt_cache=True)
+    first = client.body('model', [{'id': 'one', 'title': 'first song'}], 1000)
+    second = client.body('model', [{'id': 'two', 'title': 'second song'}], 1000)
+    assert first['system'] == second['system']
+    assert first['system'][0]['cache_control'] == dict(type='ephemeral', ttl='5m')
+    assert 'first song' not in first['system'][0]['text']
+    assert first['messages'] != second['messages']
+
+
+def test_source_sdk_selfcheck_remains_network_free():
+    from music_sorter.selfcheck import verify_sdks
+    result = verify_sdks()
+    assert result['completed'] and result['network_requests'] == result['paid_requests'] == 0
+    assert result['providers']['openai']['local_transport_requests'] == 7
+    assert result['providers']['anthropic']['local_transport_requests'] == 7
+    assert all(value['batch_completed'] for value in result['providers'].values())
+
+
+@pytest.mark.parametrize('url', ['https://other.example/results', 'http://api.anthropic.com/results', 'https://api.anthropic.com:444/results', 'https://user:pass@api.anthropic.com/results'])
+def test_result_urls_cannot_send_credentials_to_other_endpoint(url):
+    import httpx2
+    client = ProviderClient('anthropic', None, client=SimpleNamespace())
+    with pytest.raises(ProviderError) as caught:
+        client.check_endpoint(httpx2.Request('GET', url))
+    assert caught.value.category == 'invalid'
+    client.check_endpoint(httpx2.Request('GET', 'https://api.anthropic.com/v1/messages/batches/fixture/results'))

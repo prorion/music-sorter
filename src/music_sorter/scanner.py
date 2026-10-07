@@ -15,6 +15,21 @@ from .database import Library, encode, normalized, path_key
 VERSION_PATTERN = re.compile(r"\b(live|remix|instrumental|acoustic|remaster(?:ed)?|karaoke)\b", re.I)
 
 
+def recording_identifiers(tags):
+    mbids, isrcs = set(), set()
+    if tags:
+        for frame in tags.getall('UFID'):
+            if frame.owner.rstrip('/').casefold() in {'http://musicbrainz.org', 'https://musicbrainz.org'}:
+                mbids.add(frame.data.decode('ascii', errors='ignore').strip())
+        for frame in tags.getall('TXXX'):
+            if normalized(frame.desc) in {'musicbrainz track id', 'musicbrainz recording id'}:
+                mbids.update(str(item).strip() for item in frame.text)
+        for frame in tags.getall('TSRC'):
+            isrcs.update(str(item).replace('-', '').replace(' ', '').upper() for item in frame.text)
+    return dict(recording_ids=sorted(value.lower() for value in mbids if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', value))[:5],
+                isrcs=sorted(value for value in isrcs if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}[0-9]{7}', value))[:5])
+
+
 def parse_filename(path: Path) -> tuple[str, str]:
     stem = unicodedata.normalize("NFC", path.stem)
     match = re.match(r"^(.+?)\s*-\s*(?:\d{1,3}\s*-\s*)?(.+)$", stem)
@@ -56,7 +71,8 @@ def read_snapshot(path: Path, cancel: threading.Event | None = None) -> dict:
                     version="|".join(sorted(set(normalized(m.group(1)) for m in VERSION_PATTERN.finditer(title + " " + path.stem)))),
                     duration=audio.info.length, bitrate=audio.info.bitrate, sample_rate=audio.info.sample_rate,
                     grade=grade, has_lyrics=has_lyrics, has_priv=has_priv,
-                    metadata_source="id3" if tagged_title and tagged_artist else "id3_filename")
+                    metadata_source="id3" if tagged_title and tagged_artist else "id3_filename",
+                    **recording_identifiers(tags))
 
 
 class ScanControl:

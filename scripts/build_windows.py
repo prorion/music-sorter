@@ -72,6 +72,9 @@ def main():
     config["nuitka"] = {"mode": "standalone", "macos.permissions": "",
                         "extra_args": "--quiet --noinclude-qt-translations --include-package=music_sorter "
                         "--include-package-data=music_sorter --windows-console-mode=disable --msvc=latest "
+                        "--include-package=openai.resources.responses --include-package=openai.types.responses "
+                        "--include-module=openai.resources.files --include-module=openai.resources.batches "
+                        "--include-package=anthropic.resources.messages --include-package=anthropic.types "
                         "--assume-yes-for-downloads"}
     target = build / "windows.spec"
     with target.open("w", encoding="utf-8") as stream:

@@ -41,11 +41,11 @@ def test_cache_has_no_key_and_reuses_complete_response(library, root, song, fake
     assert lookup.lookup(item, 'musicbrainz')['state'] == 'matched'
     assert lookup.lookup(item, 'musicbrainz')['cached']
     lookup.lookup(item, 'lastfm')
-    assert len(calls) == 2 and len(lookup.evidence(item)) == 2
+    assert len(calls) == 3 and len(lookup.evidence(item)) == 2
     with library.connection() as db:
         assert 'secret-key' not in str([tuple(row) for row in db.execute('SELECT * FROM external_cache')])
     lookup.lookup(item, 'musicbrainz', refresh=True)
-    assert len(calls) == 3
+    assert len(calls) == 4
 
 
 def test_missing_contact_key_no_network(library):
@@ -54,3 +54,85 @@ def test_missing_contact_key_no_network(library):
     lookup = ExternalLookup(library, Settings(), fetch=fail)
     assert lookup.lookup(track(), 'musicbrainz')['state'] == 'skipped'
     assert lookup.lookup(track(), 'lastfm')['state'] == 'skipped'
+
+
+def test_duration_setting_invalidates_cache(library):
+    settings = Settings(musicbrainz_contact='user@example.test', duplicate_tolerance_seconds=5)
+    calls = []
+    def fetch(service, params):
+        calls.append(params)
+        return dict(recordings=[candidate(length=184000)], count=1)
+    lookup = ExternalLookup(library, settings, fetch=fetch)
+    assert lookup.lookup(track(), 'musicbrainz')['state'] == 'matched'
+    settings.duplicate_tolerance_seconds = 2
+    assert lookup.cached(track(), 'musicbrainz') is None
+    assert lookup.lookup(track(), 'musicbrainz')['state'] == 'ambiguous'
+    assert len(calls) == 2
+
+
+def test_valid_existing_id_has_priority_and_conflict_never_falls_back(library):
+    item = track()
+    identity = candidate()['id']
+    item['metadata_json'] = dict(recording_ids=[identity], isrcs=['USAAA2600001'])
+    calls = []
+    def fetch(service, params):
+        calls.append(params)
+        return candidate(artist='다른 가수')
+    result = ExternalLookup(library, Settings(musicbrainz_contact='user@example.test'), fetch=fetch).lookup(item, 'musicbrainz')
+    assert len(calls) == 1 and calls[0]['_id'] == identity and calls[0]['_entity'] == 'recording'
+    assert result['state'] == 'ambiguous' and result['evidence'] == []
+
+
+def test_isrc_lookup_checks_all_candidates_and_metadata_ids(library):
+    from music_sorter.scanner import recording_identifiers
+    from mutagen.id3 import ID3, TSRC, UFID, TXXX
+    tags = ID3()
+    identity = candidate()['id']
+    tags.add(UFID(owner='http://musicbrainz.org', data=identity.encode()))
+    tags.add(TXXX(desc='MusicBrainz Recording Id', text=['invalid']))
+    tags.add(TSRC(text=['US-AAA-26-00001']))
+    assert recording_identifiers(tags) == dict(recording_ids=[identity], isrcs=['USAAA2600001'])
+    item = track()
+    item['metadata_json'] = dict(isrcs=['USAAA2600001'])
+    calls = []
+    def fetch(service, params):
+        calls.append(params)
+        return dict(recordings=[candidate(), candidate('22222222-2222-2222-2222-222222222222')])
+    result = ExternalLookup(library, Settings(musicbrainz_contact='user@example.test'), fetch=fetch).lookup(item, 'musicbrainz')
+    assert result['state'] == 'ambiguous' and calls[0]['_entity'] == 'isrc'
+
+
+def test_manual_candidate_selection_is_snapshot_guarded(library, root, song, fake_reader):
+    import pytest
+    scan_library(library, root)
+    item = library.list_tracks()[0][0]
+    lookup = ExternalLookup(library, Settings(musicbrainz_contact='user@example.test'), fetch=lambda *_: dict(recordings=[candidate(), candidate('22222222-2222-2222-2222-222222222222')], count=2))
+    lookup.lookup(item, 'musicbrainz')
+    expected = lookup.cached(item, 'musicbrainz')
+    selected = lookup.choose_candidate(item['id'], candidate()['id'], expected, item['revision'], '앨범 크레딧의 연주자와 녹음을 확인')
+    assert selected['manual_selection']['recording_id'] == candidate()['id']
+    assert library.track(item['id'])['classification'] == item['classification']
+    assert song.read_bytes() == b'original-audio'
+    with pytest.raises(ValueError):
+        lookup.choose_candidate(item['id'], candidate()['id'], expected, item['revision'], '이전 캐시')
+    fresh = lookup.cached(item, 'musicbrainz')
+    song.write_bytes(b'external-change')
+    with pytest.raises(ValueError):
+        lookup.choose_candidate(item['id'], candidate()['id'], fresh, item['revision'], '변경된 파일')
+
+
+def test_artist_tags_cache_shared_across_songs_and_reference_only(library):
+    calls = []
+    def fetch(service, params):
+        calls.append(params['method'])
+        if params['method'] == 'artist.getTopTags':
+            return {'toptags': {'@attr': {'artist': '가수'}, 'tag': [{'name': 'jazz'}]}}
+        return {'track': {'name': params['track'], 'artist': {'name': '가수'}}}
+    lookup = ExternalLookup(library, Settings(), lastfm_key='fixture', fetch=fetch)
+    first = lookup.lookup(track(), 'lastfm')
+    second = track()
+    second.update(title='두 번째', hash='another')
+    lookup.lookup(second, 'lastfm')
+    assert calls.count('artist.getTopTags') == 1
+    assert first['artist_reference']['state'] == 'reference'
+    assert first['evidence'][-1]['service'] == 'lastfm_artist' and 'recording_id' not in first['evidence'][-1]

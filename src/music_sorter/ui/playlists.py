@@ -13,6 +13,7 @@ class PlaylistDialog(QDialog):
     def __init__(self, library, settings, parent=None):
         super().__init__(parent)
         self.library, self.settings, self.worker = library, settings, None
+        self.offset = 0
         self.setWindowTitle('재생목록 생성')
         self.resize(900, 660)
         layout = QVBoxLayout(self)
@@ -42,6 +43,15 @@ class PlaylistDialog(QDialog):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnWidth(0, 460)
         layout.addWidget(self.table, 1)
+        pages = QHBoxLayout()
+        self.previous, self.next, self.page_label = QPushButton('이전'), QPushButton('다음'), QLabel()
+        self.previous.clicked.connect(lambda: self.turn_page(-1))
+        self.next.clicked.connect(lambda: self.turn_page(1))
+        pages.addWidget(self.previous)
+        pages.addWidget(self.page_label)
+        pages.addStretch()
+        pages.addWidget(self.next)
+        layout.addLayout(pages)
         self.status = QLabel('등록된 곡을 바탕으로 목록을 생성하세요.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -61,11 +71,20 @@ class PlaylistDialog(QDialog):
 
     def refresh(self):
         with self.library.connection() as db:
-            rows = db.execute('SELECT * FROM playlist_outputs ORDER BY path LIMIT 200').fetchall()
+            total = db.execute('SELECT count(*) FROM playlist_outputs').fetchone()[0]
+            self.offset = min(self.offset, max(0, (total - 1) // 200) * 200)
+            rows = db.execute('SELECT * FROM playlist_outputs ORDER BY path LIMIT 200 OFFSET ?', (self.offset,)).fetchall()
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             for j, value in enumerate((Path(row['path']).name, '갱신 필요' if row['dirty'] else '생성됨', row['updated_at'])):
                 self.table.setItem(i, j, QTableWidgetItem(value))
+        self.previous.setEnabled(self.offset > 0)
+        self.next.setEnabled(self.offset + len(rows) < total)
+        self.page_label.setText(f'{self.offset + 1 if rows else 0}–{self.offset + len(rows)} / {total:,}개')
+
+    def turn_page(self, delta):
+        self.offset = max(0, self.offset + delta * 200)
+        self.refresh()
 
     def start(self):
         if self.worker:
