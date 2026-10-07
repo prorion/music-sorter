@@ -11,6 +11,7 @@ class Choices(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        layout.setSpacing(5)
         layout.setContentsMargins(0, 0, 0, 0)
         self.unknown = QCheckBox("미확정")
         self.unknown.setChecked(True)
@@ -63,15 +64,21 @@ class TrackEditor(QWidget):
 
     def __init__(self, library, parent=None):
         super().__init__(parent)
+        self.setObjectName("trackEditor")
         self.library, self.current = library, None
         self.loading = True
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        heading = QLabel("곡 상세")
+        heading.setObjectName("muted")
+        layout.addWidget(heading)
         self.title = QLabel("곡을 선택하세요")
         self.title.setWordWrap(True)
-        self.title.setStyleSheet("font-size: 17px; font-weight: 600;")
+        self.title.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(self.title)
         self.metadata = QLabel("파일은 그대로 유지하고 판정만 DB에 저장합니다.")
         self.metadata.setWordWrap(True)
+        self.metadata.setObjectName("subtle")
         self.metadata.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.metadata)
         self.fields, self.edits, self.protection = {}, {}, {}
@@ -82,6 +89,7 @@ class TrackEditor(QWidget):
             protection = QLabel()
             row.addStretch()
             unlock = QPushButton("보호 해제")
+            unlock.setObjectName("ghost")
             unlock.setToolTip("자동 분류로 되돌리기 · API 호출 없이 보호만 해제")
             unlock.clicked.connect(lambda _, a=axis: self.unlock(a))
             row.addWidget(unlock)
@@ -138,7 +146,8 @@ class TrackEditor(QWidget):
         self.title.setText(f"{track['title']}\n{track['artist'] or '아티스트 정보 없음'}")
         rate = f"{(track['bitrate'] or 0) // 1000}kbps · {track['sample_rate'] or '?'}Hz"
         state = {"ready": "확인됨", "missing": "누락", "external_change": "외부 변경", "link_pending": "연결 보류", "unavailable": "확인 불가", "replaced": "교체된 기록"}.get(track["file_state"], "확인 필요")
-        self.metadata.setText(f"{track['path']}\n{rate} · 메타데이터 {track['grade']}\n기존 장르: {track['metadata_json'].get('genre') or '없음'}\n파일 상태: {state}")
+        self.metadata.setText(f"{rate} · {state}\n기존 장르: {track['metadata_json'].get('genre') or '없음'}")
+        self.metadata.setToolTip(track['path'])
         major = track["classification"]["major"]["value"]
         for axis in AXES:
             data = track["classification"][axis]

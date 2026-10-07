@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from .classification import AXES, empty_classification, manual_patch, review_state, validate
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def now() -> str:
@@ -37,10 +37,10 @@ class Library:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in {0, 1, SCHEMA_VERSION}:
+        if version not in {0, 1, 2, SCHEMA_VERSION}:
             raise RuntimeError("지원하지 않는 DB 버전입니다. 새 버전으로 열어 주세요.")
-        if version == 1:
-            self.backup(path.parent / "backups" / f"before-schema-2-{uuid4().hex}.sqlite3")
+        if version in {1, 2}:
+            self.backup(path.parent / "backups" / f"before-schema-3-{uuid4().hex}.sqlite3")
         with self.connection(write=True) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -90,6 +90,16 @@ class Library:
                 );
                 CREATE INDEX IF NOT EXISTS bulk_job_sequence ON bulk_targets(job_id,sequence);
                 CREATE INDEX IF NOT EXISTS bulk_job_state_sequence ON bulk_targets(job_id,state,sequence);
+                CREATE TABLE IF NOT EXISTS file_ops (
+                    id TEXT PRIMARY KEY, job_id TEXT NOT NULL, track_id TEXT NOT NULL,
+                    state TEXT NOT NULL, plan TEXT NOT NULL, result TEXT,
+                    reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS file_ops_track ON file_ops(track_id,created_at);
+                CREATE TABLE IF NOT EXISTS playlist_outputs (
+                    path_key TEXT PRIMARY KEY, path TEXT NOT NULL, hash TEXT NOT NULL,
+                    definition TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                );
             """)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
@@ -116,6 +126,14 @@ class Library:
             if saved and saved[0] != path_key(root):
                 raise ValueError("이 DB에는 다른 음악 루트가 등록되어 있습니다. 새 DB로 시작하세요.")
             db.execute("INSERT OR IGNORE INTO metadata VALUES ('music_root',?)", (path_key(root),))
+
+    def statistics(self) -> dict:
+        with self.connection() as db:
+            rows = db.execute("SELECT review_state,count(*) AS n FROM tracks WHERE file_state!='replaced' GROUP BY review_state").fetchall()
+            values = {row["review_state"]: row["n"] for row in rows}
+            unavailable = db.execute("SELECT count(*) FROM tracks WHERE file_state NOT IN ('ready','replaced')").fetchone()[0]
+        return dict(total=sum(values.values()), confirmed=values.get("confirmed", 0),
+                    unclassified=values.get("unclassified", 0), unresolved=values.get("unresolved", 0), unavailable=unavailable)
 
     def start_job(self, kind="scan") -> str:
         job_id = uuid4().hex

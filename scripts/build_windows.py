@@ -61,7 +61,8 @@ def main():
     (bundle / "DEPENDENCIES.json").write_text(json.dumps(notices, indent=2), "utf-8")
     (bundle / "README.txt").write_text(f"music-sorter {__version__} local development prototype\nRun main.exe.\n"
                                       "OpenAI/Claude model-list connection checks are supported.\n"
-                                      "API classification and music file changes are not implemented.\n"
+                                      "File preview/apply/undo and relative playlist generation are supported.\n"
+                                      "API classification is under development; use copies to validate file changes.\n"
                                       "Separate Windows validation and full distribution license review remain pending.\n", "utf-8")
     return 0
 

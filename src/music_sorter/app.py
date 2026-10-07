@@ -9,6 +9,7 @@ from PySide6.QtCore import QLockFile, QLoggingCategory, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .database import Library
+from .file_ops import FileOperations
 from .settings import Settings, data_directory
 from .ui.main_window import MainWindow
 from .ui.settings_dialog import SettingsDialog
@@ -43,6 +44,11 @@ def main(argv=None) -> int:
         library.recover_interrupted_jobs()
         apply_theme(app, settings.theme, settings.font_scale)
         window = MainWindow(library, settings, config_path)
+        if settings.music_root:
+            recovery = FileOperations(library, Path(settings.music_root)).recover()
+            if recovery['recovered'] or recovery['pending']:
+                window.refresh()
+                window.status.setText(f'파일 작업 기록 복구 {recovery["recovered"]} · 확인 필요 {len(recovery["pending"])} · 작업 이력에서 확인하세요')
         window.show()
         api_dialog = None
         api_report = {}

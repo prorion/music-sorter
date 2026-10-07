@@ -72,10 +72,10 @@ def test_schema_upgrade_backs_up_and_preserves_classification(library, root, son
         db.execute("DROP TABLE bulk_targets")
         db.execute("PRAGMA user_version=1")
     upgraded = Library(library.path)
-    backups = list((library.path.parent / "backups").glob("before-schema-2-*.sqlite3"))
+    backups = list((library.path.parent / "backups").glob("before-schema-3-*.sqlite3"))
     assert len(backups) == 1
     with upgraded.connection() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
     assert upgraded.track(row["id"])["classification"]["concept"]["protected"]
     import sqlite3
     with sqlite3.connect(backups[0]) as db:

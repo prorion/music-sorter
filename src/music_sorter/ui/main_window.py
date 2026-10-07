@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-                              QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                              QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
                               QScrollArea, QSplitter, QStackedWidget, QTableView, QTableWidget,
                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..classification import TAXONOMY
+from .. import __version__
 from ..database import Library
 from ..scanner import ScanControl, scan_library
 from ..settings import Settings
@@ -20,6 +21,9 @@ from .editor import TrackEditor
 from .player import Player
 from .settings_dialog import SettingsDialog
 from .theme import apply_theme
+from .design import StatCard, TrackDelegate, icon
+from .operations import FileDialog
+from .playlists import PlaylistPage
 
 STATE_LABELS = {"ready": "확인됨", "external_change": "외부 변경", "missing": "누락", "unavailable": "확인 불가",
                 "link_pending": "연결 보류", "replaced": "교체된 기록", "unclassified": "미분류", "unresolved": "미확정",
@@ -101,32 +105,64 @@ class MainWindow(QMainWindow):
         self.sort_column, self.descending = "title_key", False
         self.refreshing = False
         self.active_navigation = 0
+        self.details_preference = True
         self.applied_filters = ("", "", "", "", "")
-        self.setWindowTitle("music-sorter · 로컬 관리 0.2")
+        self.setWindowTitle(f"music-sorter · {__version__}")
         self.resize(1440, 900)
         self.setMinimumSize(1000, 700)
         container = QWidget()
+        container.setObjectName("workspace")
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 14)
+        layout.setSpacing(16)
         top = QHBoxLayout()
-        brand = QLabel("music-sorter")
-        brand.setStyleSheet("font-size: 24px; font-weight: 700;")
-        top.addWidget(brand)
+        self.page_title = QLabel("음악 라이브러리")
+        self.page_title.setObjectName("pageTitle")
+        top.addWidget(self.page_title)
         self.root_label = QLabel()
+        self.root_label.setObjectName("muted")
         self.root_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         top.addWidget(self.root_label, 1)
         settings_button = QPushButton("⚙ 설정")
+        settings_button.setText("설정")
+        settings_button.setIcon(icon("settings"))
         settings_button.setAccessibleName("설정 열기")
         settings_button.setToolTip("API 키 · 모델 · 화면 · 음악 라이브러리")
         settings_button.clicked.connect(self.open_settings)
         top.addWidget(settings_button)
         layout.addLayout(top)
         body = QHBoxLayout()
+        body.setSpacing(20)
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(200)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(14, 20, 14, 18)
+        sidebar_layout.setSpacing(10)
+        logo = QLabel()
+        logo.setPixmap(icon("music", "#64B899", 36).pixmap(36, 36))
+        sidebar_layout.addWidget(logo)
+        brand = QLabel("music-sorter")
+        brand.setObjectName("brand")
+        sidebar_layout.addWidget(brand)
+        tagline = QLabel("나의 음악, 더 선명하게.")
+        tagline.setObjectName("subtle")
+        sidebar_layout.addWidget(tagline)
+        sidebar_layout.addSpacing(28)
         self.navigation = QListWidget()
-        self.navigation.addItems(["음악 라이브러리", "분류 검토", "중복 검토", "재생목록", "작업 이력"])
-        self.navigation.setFixedWidth(180)
-        body.addWidget(self.navigation)
+        self.navigation.setObjectName("navigation")
+        for title, glyph in (("음악 라이브러리", "library"), ("분류 검토", "review"), ("중복 검토", "duplicates"),
+                             ("재생목록", "playlist"), ("작업 이력", "history")):
+            self.navigation.addItem(QListWidgetItem(icon(glyph), title))
+        self.navigation.setIconSize(QSize(20, 20))
+        sidebar_layout.addWidget(self.navigation, 1)
+        badge = QLabel("로컬 라이브러리")
+        badge.setObjectName("badge")
+        sidebar_layout.addWidget(badge)
+        version = QLabel(f"Windows · v{__version__}")
+        version.setObjectName("subtle")
+        sidebar_layout.addWidget(version)
+        body.addWidget(sidebar)
         self.pages = QStackedWidget()
         body.addWidget(self.pages, 1)
         layout.addLayout(body, 1)
@@ -134,10 +170,24 @@ class MainWindow(QMainWindow):
         library_page = QWidget()
         main = QVBoxLayout(library_page)
         main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(12)
+        cards = QHBoxLayout()
+        cards.setSpacing(12)
+        self.stat_cards = {}
+        for key, label, hint, tint in (("total", "전체 음악", "라이브러리에 등록된 곡", "mint"),
+                                       ("confirmed", "분류 완료", "모든 항목을 확인한 곡", "mint"),
+                                       ("unclassified", "분류 대기", "아직 분류하지 않은 곡", "neutral"),
+                                       ("unresolved", "검토 필요", "미확정 항목이 남은 곡", "neutral")):
+            card = StatCard(label, hint, tint)
+            self.stat_cards[key] = card
+            cards.addWidget(card, 1)
+        main.addLayout(cards)
         filters = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("제목 또는 아티스트 검색")
         self.search.setClearButtonEnabled(True)
+        self.search.addAction(icon("search"), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setAccessibleName("제목 또는 아티스트 검색")
         filters.addWidget(self.search, 1)
         self.major_filter = QComboBox()
         self.major_filter.addItem("모든 대분류", "")
@@ -161,7 +211,8 @@ class MainWindow(QMainWindow):
         tags.addStretch()
         main.addLayout(tags)
         actions = QHBoxLayout()
-        self.scan_button = QPushButton("폴더 등록 / 스캔")
+        self.scan_button = QPushButton("폴더 스캔")
+        self.scan_button.setIcon(icon("folder", "#728BA2"))
         self.scan_button.setProperty("primary", True)
         self.scan_button.clicked.connect(self.start_scan)
         actions.addWidget(self.scan_button)
@@ -169,14 +220,20 @@ class MainWindow(QMainWindow):
         self.bulk_button.setToolTip("Ctrl/Shift로 선택한 곡 · 검색 결과 전체 · 라이브러리 전체")
         self.bulk_button.clicked.connect(self.open_bulk)
         actions.addWidget(self.bulk_button)
-        for title, tooltip in (("분류 실행", "외부 API·LLM은 다음 개발 단계에서 제공합니다"),
-                               ("파일 정리 미리보기", "파일 적용·복구 검증 후 제공합니다")):
+        for title, tooltip in (("분류 실행", "외부 API·LLM은 다음 개발 단계에서 제공합니다"),):
             button = QPushButton(title)
             button.setEnabled(False)
             button.setToolTip(tooltip)
             actions.addWidget(button)
-        details = QPushButton("상세 접기 / 펼치기")
-        details.clicked.connect(lambda: self.detail_panel.setVisible(not self.detail_panel.isVisible()))
+        self.file_button = QPushButton('파일 정리 미리보기')
+        self.file_button.clicked.connect(self.open_file_ops)
+        actions.addWidget(self.file_button)
+        details = QPushButton("곡 상세")
+        details.setIcon(icon("detail"))
+        details.setCheckable(True)
+        details.setChecked(True)
+        self.details_button = details
+        details.clicked.connect(self.toggle_details)
         actions.addWidget(details)
         actions.addStretch()
         main.addLayout(actions)
@@ -187,31 +244,38 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.table.setAlternatingRowColors(False)
+        self.table.setShowGrid(False)
+        self.table.setItemDelegate(TrackDelegate(self.table))
+        self.table.verticalHeader().setDefaultSectionSize(48)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
-        self.table.setColumnWidth(0, 220)
-        self.table.setColumnWidth(1, 140)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for column, width in ((2, 83), (3, 110), (4, 90), (5, 90)):
+            self.table.setColumnWidth(column, width)
         self.model.order_requested.connect(self.order_changed)
         self.table.selectionModel().currentRowChanged.connect(self.selection_changed)
         self.splitter.addWidget(self.table)
         self.detail_scroll = QScrollArea()
+        self.detail_scroll.setObjectName("detailScroll")
         self.detail_scroll.setWidgetResizable(True)
-        self.detail_scroll.setMinimumWidth(320)
+        self.detail_scroll.setMinimumWidth(300)
         self.editor = TrackEditor(library)
         self.editor.saved.connect(self.refresh)
         self.editor.external_review.connect(self.review_external)
         self.detail_scroll.setWidget(self.editor)
         self.detail_panel = QWidget()
+        self.detail_panel.setObjectName("detailPanel")
         detail_layout = QVBoxLayout(self.detail_panel)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setContentsMargins(12, 12, 12, 12)
         detail_layout.addWidget(self.detail_scroll, 1)
         detail_layout.addWidget(self.editor.save_button)
         self.player = Player()
-        detail_layout.addWidget(self.player)
         self.splitter.addWidget(self.detail_panel)
-        self.splitter.setSizes([700, 360])
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setSizes([780, 320])
         main.addWidget(self.splitter, 1)
         page_controls = QHBoxLayout()
         self.previous = QPushButton("이전 페이지")
@@ -219,24 +283,28 @@ class MainWindow(QMainWindow):
         self.next = QPushButton("다음 페이지")
         self.next.clicked.connect(lambda: self.turn_page(1))
         self.count_label = QLabel()
+        self.count_label.setObjectName("muted")
         page_controls.addWidget(self.previous)
         page_controls.addWidget(self.count_label, 1)
         page_controls.addWidget(self.next)
         main.addLayout(page_controls)
         self.pages.addWidget(library_page)
 
-        playlist_page = QWidget()
-        playlist_layout = QVBoxLayout(playlist_page)
-        playlist_layout.addWidget(QLabel("재생목록 생성은 파일 적용·복구 구현 후 연결합니다.\n현재 단계에서는 음악 파일과 기존 재생목록을 변경하지 않습니다."))
-        playlist_layout.addStretch()
+        playlist_page = PlaylistPage(self.library, lambda: self.settings, self)
         self.pages.addWidget(playlist_page)
         self.jobs_table = QTableWidget(0, 5)
         self.jobs_table.setHorizontalHeaderLabels(["작업", "상태", "처리 수", "보류/실패", "시작 시각 (UTC)"])
         self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.jobs_table.horizontalHeader().setStretchLastSection(True)
         self.pages.addWidget(self.jobs_table)
+        self.jobs_table.setShowGrid(False)
+        self.jobs_table.verticalHeader().setVisible(False)
+        self.jobs_table.verticalHeader().setDefaultSectionSize(44)
+        self.jobs_table.cellDoubleClicked.connect(self.open_job)
+        layout.addWidget(self.player)
         footer = QHBoxLayout()
         self.status = QLabel("로컬 관리 · API 비용 없음 · 파일 변경 없음")
+        self.status.setObjectName("subtle")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, 1)
         self.progress = QProgressBar()
@@ -268,7 +336,19 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def update_root_label(self):
-        self.root_label.setText(self.settings.music_root or "음악 폴더를 등록하면 시작할 수 있습니다")
+        self.root_label.setText("  /  " + Path(self.settings.music_root).name if self.settings.music_root else "  /  폴더를 등록하면 시작할 수 있습니다")
+        self.root_label.setToolTip(self.settings.music_root)
+
+    def toggle_details(self, checked):
+        self.details_preference = checked
+        self.detail_panel.setVisible(checked)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "detail_panel"):
+            visible = self.details_preference and event.size().width() >= 1250
+            self.detail_panel.setVisible(visible)
+            self.details_button.setChecked(visible)
 
     def discard_edits(self) -> bool:
         if not self.editor.dirty():
@@ -286,6 +366,8 @@ class MainWindow(QMainWindow):
             self.navigation.blockSignals(False)
             return
         self.active_navigation = index
+        titles = ("음악 라이브러리", "분류 검토", "중복 검토", "재생목록", "작업 이력")
+        self.page_title.setText(titles[index] if 0 <= index < len(titles) else "음악 라이브러리")
         if index in {0, 1}:
             self.pages.setCurrentIndex(0)
             self.offset = 0
@@ -301,6 +383,9 @@ class MainWindow(QMainWindow):
             self.load_jobs()
 
     def refresh(self):
+        statistics = self.library.statistics()
+        for key, card in self.stat_cards.items():
+            card.value.setText(f"{statistics[key]:,}")
         current_id = self.editor.current["id"] if self.editor.current else None
         rows, total = self.library.list_tracks(**self.current_filters(), limit=self.page_size, offset=self.offset,
                                              sort=self.sort_column, descending=self.descending)
@@ -336,7 +421,7 @@ class MainWindow(QMainWindow):
         self.editor.load_track(track)
         self.player.stop()
         if track["file_state"] == "ready":
-            self.player.set_track(track["path"])
+            self.player.set_track(track["path"], title=track["title"], artist=track["artist"])
 
     def filters_changed(self, *_):
         if self.discard_edits():
@@ -376,6 +461,28 @@ class MainWindow(QMainWindow):
         self.player.stop()
         BulkDialog(self.library, self.current_filters(), selected, self).exec()
         self.refresh()
+
+    def open_file_ops(self, job_id=None):
+        if self.worker and self.worker.isRunning() or not self.settings.music_root:
+            self.status.setText('폴더를 등록하고 진행 중인 스캔을 마친 뒤 파일 작업을 실행하세요.')
+            return
+        if not self.discard_edits():
+            return
+        selected = [self.model.rows[index.row()]['id'] for index in self.table.selectionModel().selectedRows()]
+        self.player.stop()
+        FileDialog(self.library, self.settings, selected, self.current_filters(), self,
+                   job_id=job_id if isinstance(job_id, str) else None).exec()
+        self.refresh()
+
+    def open_job(self, row, column):
+        job_id = self.jobs_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        job = next((job for job in self.library.jobs() if job['id'] == job_id), None)
+        if job is None:
+            return
+        if job['kind'] == 'file_preview':
+            self.open_file_ops(job['id'])
+        else:
+            QMessageBox.information(self, '작업 상세', job['detail'] or '상세 기록 없음')
 
     def turn_page(self, direction):
         if self.discard_edits():
@@ -464,9 +571,10 @@ class MainWindow(QMainWindow):
         jobs = self.library.jobs()
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
-            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정"}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
+            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정", 'file_preview': '파일 정리·복구', 'playlists': '재생목록 생성'}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
                                            job["processed"], job["failed"], job["started_at"])):
                 item = QTableWidgetItem(str(value))
+                item.setData(Qt.ItemDataRole.UserRole, job['id'])
                 item.setToolTip(job["detail"])
                 self.jobs_table.setItem(index, column, item)
 
