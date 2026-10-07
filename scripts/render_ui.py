@@ -3,12 +3,14 @@ import argparse
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QLoggingCategory, QTimer
+from PySide6.QtCore import QLoggingCategory, QTimer, Qt
 from PySide6.QtWidgets import QApplication
 
 from music_sorter.database import Library
 from music_sorter.settings import Settings
 from music_sorter.ui.duplicates import DuplicateDialog
+from music_sorter.ui.bulk import BulkDialog
+from music_sorter.ui.links import LinkDialog
 from music_sorter.ui.main_window import MainWindow
 from music_sorter.ui.settings_dialog import SettingsDialog
 from music_sorter.ui.theme import apply_theme
@@ -49,10 +51,42 @@ def main():
         app.processEvents()
         duplicates.grab().save(str(args.output / "duplicates.png"))
         duplicates.close()
-        window.player.stop()
-        (args.output / "render.json").write_text(json.dumps(report, indent=2), "utf-8")
-        print(json.dumps(report))
-        app.quit()
+        bulk = BulkDialog(library, window.current_filters(), [window.model.rows[0]["id"]] if window.model.rows else [], window)
+        bulk.show()
+        app.processEvents()
+        bulk.grab().save(str(args.output / "bulk-editor.png"))
+
+        def finish():
+            if bulk.preview:
+                bulk.grab().save(str(args.output / "bulk-preview.png"))
+                report["bulk_preview"] = bulk.preview
+            bulk.close()
+            capture_links()
+
+        def capture_links():
+            pending, _ = library.list_tracks(state="link_pending", limit=1)
+            if pending:
+                links = LinkDialog(library, pending[0]["id"], window)
+                links.show()
+                app.processEvents()
+                links.grab().save(str(args.output / "link-review.png"))
+                links.close()
+            window.player.stop()
+            (args.output / "render.json").write_text(json.dumps(report, indent=2), "utf-8")
+            print(json.dumps(report))
+            app.quit()
+
+        if window.model.rows:
+            bulk.scope.setCurrentIndex(bulk.scope.findData("all"))
+            bulk.edits["mood"].setChecked(True)
+            for index in range(bulk.values["mood"].count()):
+                item = bulk.values["mood"].item(index)
+                if item.text() == "감성적인":
+                    item.setCheckState(Qt.CheckState.Checked)
+            bulk.start_preview()
+            bulk.worker.finished.connect(finish)
+        else:
+            finish()
 
     QTimer.singleShot(300, capture)
     app.exec()

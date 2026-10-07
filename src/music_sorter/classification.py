@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from importlib.resources import files
 
 TAXONOMY = json.loads(files("music_sorter").joinpath("resources/taxonomy.json").read_text("utf-8"))
@@ -42,3 +43,32 @@ def review_state(classification: dict) -> str:
     if all(s == "unclassified" for s in statuses):
         return "unclassified"
     return "confirmed" if all(s == "confirmed" for s in statuses) else "unresolved"
+
+
+def manual_patch(original: dict, operations: dict) -> dict:
+    if not operations or any(axis not in AXES for axis in operations):
+        raise ValueError("수정할 분류 항목을 선택하세요.")
+    updated = deepcopy(original)
+    for axis, operation in operations.items():
+        mode, value = operation["mode"], operation.get("value")
+        if mode == "unknown":
+            value = None
+        elif axis in {"major", "vocal"}:
+            if mode != "set":
+                raise ValueError("한 값 항목은 지정 또는 미확정으로 수정하세요.")
+        elif mode == "none" and axis == "concept":
+            value = []
+        elif mode in {"replace", "add", "remove"}:
+            if not isinstance(value, list) or not value or len(set(value)) != len(value):
+                raise ValueError("수정할 태그를 하나 이상 선택하세요.")
+            if mode in {"add", "remove"}:
+                previous = original[axis]["value"]
+                if previous is None:
+                    raise ValueError("미확정 목록은 먼저 목록 교체로 확정하세요.")
+                value = list(dict.fromkeys(previous + value)) if mode == "add" else [v for v in previous if v not in value]
+        else:
+            raise ValueError("수정 방식을 확인하세요.")
+        updated[axis] = dict(value=value, status="unresolved" if value is None else "confirmed",
+                             protected=True, source="manual", confidence=None, reason="사용자 검토")
+    validate(updated)
+    return updated

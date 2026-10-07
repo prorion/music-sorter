@@ -69,3 +69,67 @@ def test_rejected_navigation_restores_filter_and_keeps_draft(qtbot, library, roo
     monkeypatch.setattr("music_sorter.ui.main_window.QMessageBox.question", lambda *_: QMessageBox.StandardButton.Yes)
     assert window.discard_edits()
     assert not window.editor.dirty()
+
+
+def test_bulk_dialog_previews_and_applies_only_selected_rows(qtbot, library, root, song, fake_reader, monkeypatch):
+    from music_sorter.ui.bulk import BulkDialog
+    (root / "두번째.mp3").write_bytes(b"second")
+    scan_library(library, root)
+    rows = library.list_tracks()[0]
+    dialog = BulkDialog(library, {}, [rows[0]["id"]])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.edits["concept"].setChecked(True)
+    dialog.modes["concept"].setCurrentIndex(dialog.modes["concept"].findData("none"))
+    dialog.start_preview()
+    qtbot.waitUntil(lambda: dialog.worker is not None and not dialog.worker.isRunning(), timeout=10000)
+    qtbot.waitUntil(lambda: dialog.apply_button.isEnabled())
+    assert dialog.preview["total"] == 1 and dialog.model.rowCount() == 1
+    monkeypatch.setattr("music_sorter.ui.bulk.QMessageBox.question", lambda *_: QMessageBox.StandardButton.Yes)
+    dialog.start_apply()
+    qtbot.waitUntil(lambda: not dialog.worker.isRunning(), timeout=10000)
+    qtbot.waitUntil(lambda: hasattr(dialog, "applied"))
+    assert library.track(rows[0]["id"])["classification"]["concept"]["protected"]
+    assert not library.track(rows[1]["id"])["classification"]["concept"]["protected"]
+    assert not dialog.apply_button.isEnabled()
+    dialog.scope.setCurrentIndex(2)
+    assert dialog.preview is None
+
+
+def test_link_dialog_has_no_default_and_saves_after_worker_finishes(qtbot, library, root, song, fake_reader, monkeypatch):
+    from test_review import pending_pair
+    from music_sorter.ui.links import LinkDialog
+    original, pending = pending_pair(library, root, song)
+    dialog = LinkDialog(library, pending["id"])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.table.currentRow() == -1
+    warnings = []
+    monkeypatch.setattr("music_sorter.ui.links.QMessageBox.warning", lambda *args: warnings.append(args[2]))
+    dialog.save()
+    assert warnings and dialog.worker is None
+    dialog.table.setCurrentCell(0, 0)
+    dialog.mode.setCurrentIndex(dialog.mode.findData("link"))
+    dialog.inherit.setCurrentIndex(dialog.inherit.findData(True))
+    dialog.save()
+    qtbot.waitUntil(lambda: not dialog.worker.isRunning(), timeout=10000)
+    qtbot.waitUntil(lambda: hasattr(dialog, "result_id"))
+    assert dialog.result_id == original["id"]
+    assert library.track(original["id"])["classification"]["major"]["protected"]
+
+
+def test_mood_concept_filters_and_rejected_filter_keep_draft(qtbot, library, root, song, fake_reader, tmp_path, monkeypatch):
+    scan_library(library, root)
+    row = library.list_tracks()[0][0]
+    library.save_manual(row["id"], {"mood": ["잔잔한"], "concept": ["카페"]}, row["revision"])
+    window = MainWindow(library, Settings(music_root=str(root)), tmp_path / "settings.json")
+    qtbot.addWidget(window)
+    window.mood_filter.setCurrentIndex(window.mood_filter.findData("잔잔한"))
+    window.concept_filter.setCurrentIndex(window.concept_filter.findData("카페"))
+    assert window.model.rowCount() == 1
+    window.editor.fields["major"].setCurrentIndex(1)
+    monkeypatch.setattr("music_sorter.ui.main_window.QMessageBox.question", lambda *_: QMessageBox.StandardButton.No)
+    window.concept_filter.setCurrentIndex(window.concept_filter.findData("운동"))
+    assert window.concept_filter.currentData() == "카페" and window.editor.dirty()
+    monkeypatch.setattr("music_sorter.ui.main_window.QMessageBox.question", lambda *_: QMessageBox.StandardButton.Yes)
+    window.discard_edits()

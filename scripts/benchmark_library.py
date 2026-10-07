@@ -21,19 +21,26 @@ def main():
     stamp = now()
     classification = empty_classification()
     classification["major"] = dict(value="가요", status="confirmed", protected=False, source="benchmark", confidence=None, reason="")
-    payload = encode(classification)
+    payloads = []
+    for index in range(6):
+        classification["mood"] = dict(value=["잔잔한" if index % 2 == 0 else "경쾌한"], status="confirmed", protected=False,
+                                      source="benchmark", confidence=None, reason="")
+        classification["concept"] = dict(value=["카페" if index % 3 == 0 else "드라이브"], status="confirmed", protected=False,
+                                         source="benchmark", confidence=None, reason="")
+        payloads.append(encode(classification))
     def records():
         for index in range(args.count):
             yield (f"{index:032x}", f"virtual/{index}.mp3", f"virtual/{index}.mp3", f"{index:064x}",
                    1000, 0, f"곡 {index:06d}", f"가수 {index % 1000:04d}", "앨범", f"곡 {index:06d}",
-                   f"가수 {index % 1000:04d}", "", 180, 320000, 44100, "C", "{}", payload, stamp, stamp)
+                   f"가수 {index % 1000:04d}", "", 180, 320000, 44100, "C", "{}", payloads[index % 6], stamp, stamp)
     with library.connection(write=True) as db:
         db.executemany("""INSERT INTO tracks(id,path,path_key,hash,size,mtime_ns,title,artist,album,title_key,
             artist_key,version,duration,bitrate,sample_rate,grade,metadata_json,classification,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", records())
     report = {"rows": args.count, "query_samples": 20, "page_limit": 200, "measurements_ms": {}}
     for name, kwargs in (("page", {}), ("substring_search", {"search": "가수 0001"}),
-                         ("major_filter", {"major": "가요"}), ("artist_sort", {"sort": "artist_key"})):
+                         ("major_filter", {"major": "가요"}), ("artist_sort", {"sort": "artist_key"}),
+                         ("mood_concept_filter", {"mood": "잔잔한", "concept": "카페"})):
         times = []
         for _ in range(20):
             start = time.perf_counter()

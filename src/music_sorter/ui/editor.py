@@ -153,7 +153,8 @@ class TrackEditor(QWidget):
             self.protection[axis].setText(f"{'🔒 수동 보호' if data['protected'] else '자동 가능'} · {status}")
             self.protection[axis].setToolTip(f"출처: {data['source'] or '없음'}\n근거: {data['reason']}")
         self.save_button.setEnabled(track["file_state"] == "ready")
-        self.review_button.setVisible(track["file_state"] == "external_change")
+        self.review_button.setText("연결 보류 검토" if track["file_state"] == "link_pending" else "외부 변경 검토")
+        self.review_button.setVisible(track["file_state"] in {"external_change", "link_pending"})
         self.hint.setText("선택한 항목만 DB에 저장합니다. 음악 파일은 변경하지 않습니다.")
         self.loading = False
 

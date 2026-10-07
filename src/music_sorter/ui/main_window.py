@@ -14,6 +14,8 @@ from ..database import Library
 from ..scanner import ScanControl, scan_library
 from ..settings import Settings
 from .duplicates import DuplicateDialog
+from .bulk import BulkDialog
+from .links import LinkDialog
 from .editor import TrackEditor
 from .player import Player
 from .settings_dialog import SettingsDialog
@@ -22,7 +24,8 @@ from .theme import apply_theme
 STATE_LABELS = {"ready": "확인됨", "external_change": "외부 변경", "missing": "누락", "unavailable": "확인 불가",
                 "link_pending": "연결 보류", "replaced": "교체된 기록", "unclassified": "미분류", "unresolved": "미확정",
                 "confirmed": "확정", "running": "진행 중", "completed": "완료", "cancelled": "취소",
-                "partial": "부분 완료", "failed": "실패", "interrupted": "이전 실행 중단"}
+                "partial": "부분 완료", "failed": "실패", "interrupted": "이전 실행 중단",
+                "preparing": "미리보기 중", "prepared": "저장 확인 대기"}
 
 
 class TrackModel(QAbstractTableModel):
@@ -98,8 +101,8 @@ class MainWindow(QMainWindow):
         self.sort_column, self.descending = "title_key", False
         self.refreshing = False
         self.active_navigation = 0
-        self.applied_filters = ("", "", "")
-        self.setWindowTitle("music-sorter · 로컬 관리 0.1")
+        self.applied_filters = ("", "", "", "", "")
+        self.setWindowTitle("music-sorter · 로컬 관리 0.2")
         self.resize(1440, 900)
         self.setMinimumSize(1000, 700)
         container = QWidget()
@@ -147,11 +150,25 @@ class MainWindow(QMainWindow):
             self.state_filter.addItem(STATE_LABELS[state], state)
         filters.addWidget(self.state_filter)
         main.addLayout(filters)
+        tags = QHBoxLayout()
+        self.mood_filter = QComboBox()
+        self.concept_filter = QComboBox()
+        for widget, axis, title in ((self.mood_filter, "mood", "모든 분위기"), (self.concept_filter, "concept", "모든 컨셉")):
+            widget.addItem(title, "")
+            for tag in TAXONOMY[axis]:
+                widget.addItem(tag, tag)
+            tags.addWidget(widget)
+        tags.addStretch()
+        main.addLayout(tags)
         actions = QHBoxLayout()
         self.scan_button = QPushButton("폴더 등록 / 스캔")
         self.scan_button.setProperty("primary", True)
         self.scan_button.clicked.connect(self.start_scan)
         actions.addWidget(self.scan_button)
+        self.bulk_button = QPushButton("일괄 분류 수정")
+        self.bulk_button.setToolTip("Ctrl/Shift로 선택한 곡 · 검색 결과 전체 · 라이브러리 전체")
+        self.bulk_button.clicked.connect(self.open_bulk)
+        actions.addWidget(self.bulk_button)
         for title, tooltip in (("분류 실행", "외부 API·LLM은 다음 개발 단계에서 제공합니다"),
                                ("파일 정리 미리보기", "파일 적용·복구 검증 후 제공합니다")):
             button = QPushButton(title)
@@ -168,7 +185,7 @@ class MainWindow(QMainWindow):
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.table.setAlternatingRowColors(False)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
@@ -214,7 +231,7 @@ class MainWindow(QMainWindow):
         playlist_layout.addStretch()
         self.pages.addWidget(playlist_page)
         self.jobs_table = QTableWidget(0, 5)
-        self.jobs_table.setHorizontalHeaderLabels(["작업", "상태", "읽은 파일", "실패", "시작 시각 (UTC)"])
+        self.jobs_table.setHorizontalHeaderLabels(["작업", "상태", "처리 수", "보류/실패", "시작 시각 (UTC)"])
         self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.jobs_table.horizontalHeader().setStretchLastSection(True)
         self.pages.addWidget(self.jobs_table)
@@ -242,6 +259,8 @@ class MainWindow(QMainWindow):
         self.search.textChanged.connect(lambda: self.search_timer.start())
         self.major_filter.currentIndexChanged.connect(self.filters_changed)
         self.state_filter.currentIndexChanged.connect(self.filters_changed)
+        self.mood_filter.currentIndexChanged.connect(self.filters_changed)
+        self.concept_filter.currentIndexChanged.connect(self.filters_changed)
         self.navigation.currentRowChanged.connect(self.navigate)
         self.navigation.setCurrentRow(0)
         QShortcut(QKeySequence.StandardKey.Find, self, activated=self.search.setFocus)
@@ -283,10 +302,10 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         current_id = self.editor.current["id"] if self.editor.current else None
-        rows, total = self.library.list_tracks(self.search.text(), self.major_filter.currentData(),
-                                                self.state_filter.currentData(), self.navigation.currentRow() == 1,
-                                                self.page_size, self.offset, self.sort_column, self.descending)
-        self.applied_filters = (self.search.text(), self.major_filter.currentData(), self.state_filter.currentData())
+        rows, total = self.library.list_tracks(**self.current_filters(), limit=self.page_size, offset=self.offset,
+                                             sort=self.sort_column, descending=self.descending)
+        self.applied_filters = (self.search.text(), self.major_filter.currentData(), self.state_filter.currentData(),
+                                self.mood_filter.currentData(), self.concept_filter.currentData())
         self.refreshing = True
         self.model.replace(rows)
         self.refreshing = False
@@ -326,19 +345,37 @@ class MainWindow(QMainWindow):
                 edit.setChecked(False)
             self.refresh()
         else:
-            search, major, state = self.applied_filters
-            for widget in (self.search, self.major_filter, self.state_filter):
+            search, major, state, mood, concept = self.applied_filters
+            widgets = (self.search, self.major_filter, self.state_filter, self.mood_filter, self.concept_filter)
+            for widget in widgets:
                 widget.blockSignals(True)
             self.search.setText(search)
             self.major_filter.setCurrentIndex(self.major_filter.findData(major))
             self.state_filter.setCurrentIndex(self.state_filter.findData(state))
-            for widget in (self.search, self.major_filter, self.state_filter):
+            self.mood_filter.setCurrentIndex(self.mood_filter.findData(mood))
+            self.concept_filter.setCurrentIndex(self.concept_filter.findData(concept))
+            for widget in widgets:
                 widget.blockSignals(False)
 
     def order_changed(self, column, descending):
         if self.discard_edits():
             self.sort_column, self.descending = column, descending
             self.filters_changed()
+
+    def current_filters(self):
+        return dict(search=self.search.text(), major=self.major_filter.currentData(), state=self.state_filter.currentData(),
+                    review_only=self.navigation.currentRow() == 1, mood=self.mood_filter.currentData(), concept=self.concept_filter.currentData())
+
+    def open_bulk(self):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "스캔 중", "스캔을 마치거나 취소한 뒤 일괄 수정하세요.")
+            return
+        if not self.discard_edits():
+            return
+        selected = [self.model.rows[index.row()]["id"] for index in self.table.selectionModel().selectedRows()]
+        self.player.stop()
+        BulkDialog(self.library, self.current_filters(), selected, self).exec()
+        self.refresh()
 
     def turn_page(self, direction):
         if self.discard_edits():
@@ -427,14 +464,25 @@ class MainWindow(QMainWindow):
         jobs = self.library.jobs()
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
-            for column, value in enumerate((job["kind"], STATE_LABELS.get(job["state"], job["state"]),
+            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정"}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
                                            job["processed"], job["failed"], job["started_at"])):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(job["detail"])
                 self.jobs_table.setItem(index, column, item)
 
     def review_external(self, track_id):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "스캔 중", "스캔을 마치거나 취소한 뒤 파일 연결을 검토하세요.")
+            return
         track = self.library.track(track_id)
+        if track["file_state"] == "link_pending":
+            self.player.stop()
+            dialog = LinkDialog(self.library, track_id, self)
+            dialog.exec()
+            if hasattr(dialog, "result_id"):
+                self.editor.current = self.library.track(dialog.result_id)
+            self.refresh()
+            return
         observed = track["observed_json"]
         if not observed:
             return

@@ -54,7 +54,7 @@ def main():
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, destination)
     (bundle / "DEPENDENCIES.json").write_text(json.dumps(notices, indent=2), "utf-8")
-    (bundle / "README.txt").write_text("music-sorter 0.1 local development prototype\nRun main.exe.\n"
+    (bundle / "README.txt").write_text("music-sorter 0.2 local development prototype\nRun main.exe.\n"
                                       "API classification and music file changes are not implemented.\n"
                                       "Separate Windows validation and full distribution license review remain pending.\n", "utf-8")
     return 0

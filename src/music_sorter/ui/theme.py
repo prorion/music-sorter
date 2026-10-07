@@ -29,6 +29,7 @@ def apply_theme(app, theme: str, font_scale: float):
         QPushButton:focus, QLineEdit:focus, QComboBox:focus {{ border: 2px solid {accent}; }}
         QPushButton:disabled {{ color: #7A8491; }}
         QPushButton[primary="true"] {{ background: {accent}; color: {"#111827" if dark else "#FFFFFF"}; border: none; }}
+        QPushButton[primary="true"]:disabled {{ background: {panel}; color: #7A8491; border: 1px solid {border}; }}
         QHeaderView::section {{ background: {background}; color: {text}; padding: 8px; border: none; border-bottom: 1px solid {border}; }}
         QGroupBox {{ border: 1px solid {border}; border-radius: 6px; margin-top: 12px; padding: 12px; color: {text}; }}
         QGroupBox::title {{ subcontrol-origin: margin; left: 12px; }}

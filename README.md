@@ -5,7 +5,7 @@ Windows용 mp3 음악 자동 분류 및 재생목록 생성기
 대량의 mp3 파일을 **장르 / 분위기 / 컨셉**으로 자동 분류하고,
 태그별 재생목록(m3u)을 만들어 PC와 폰의 일반 음악 앱에서 바로 들을 수 있게 합니다.
 
-> **개발 진행 중:** 2026-10-07 개발 착수. 현재 로컬 관리 시제품이며 전체 첫 버전이 완성된 상태는 아닙니다.
+> **개발 진행 중:** 2026-10-07 개발 착수. 현재 0.2 로컬 관리 시제품이며 전체 첫 버전이 완성된 상태는 아닙니다.
 
 Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사용하도록 설계했습니다. 결정 상태·남은 검증은 [SPEC §14](docs/SPEC.md#14-결정-상태와-남은-검증), 개발 순서는 [SPEC §16](docs/SPEC.md#16-첫-버전-범위와-개발-순서), 실제 구현 현황은 [SPEC §17](docs/SPEC.md#17-구현검증-현황)을 봅니다.
 
@@ -43,6 +43,7 @@ py -3.13 -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe scripts\verify_local.py --source files --output artifacts\new-verification
+.\.venv\Scripts\python.exe scripts\verify_review.py --source artifacts\new-verification\sample-library --output artifacts\new-review
 .\.venv\Scripts\python.exe scripts\benchmark_library.py --output artifacts\new-benchmark
 .\.venv\Scripts\python.exe scripts\build_windows.py
 ```

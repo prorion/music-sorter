@@ -8,7 +8,7 @@ import shutil
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QLoggingCategory, QTimer, QUrl
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
@@ -46,6 +46,7 @@ def main():
         shutil.copy2(source, target)
         assert digest(target) == originals[source]
     app = QApplication([])
+    QLoggingCategory.setFilterRules("qt.multimedia.ffmpeg.*=false")
     library = Library(args.output / "user-data" / "music-sorter.sqlite3")
     start = time.perf_counter()
     first_scan = scan_library(library, sample_root)
