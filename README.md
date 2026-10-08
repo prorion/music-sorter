@@ -24,10 +24,10 @@ Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사
 
 ## 개발 환경과 실행
 
-빌드된 앱은 프로젝트 루트의 **`music-sorter.lnk` 바로가기**를 더블클릭해 실행합니다. 성공한 빌드마다 같은 바로가기가 새 실행파일을 가리키도록 갱신됩니다. 실행파일과 DLL·리소스는 빌드 폴더에 함께 보관합니다. 프로젝트를 이동했거나 기존 빌드에 다시 연결하려면 아래 명령으로 바로가기만 생성합니다.
+빌드된 앱은 **`dist/main.exe`** 또는 프로젝트 루트의 **`music-sorter.lnk` 바로가기**를 더블클릭해 실행합니다. 실행파일과 DLL·리소스는 `dist` 바로 아래에 함께 보관하며 버전별 폴더를 만들지 않습니다. 버전은 앱 내부·`dist/build-info.json`·Git 이력으로 관리합니다. 프로젝트를 이동했거나 기존 빌드에 다시 연결하려면 아래 명령으로 바로가기만 생성합니다.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build_windows.py --output-dir dist/0.7.6 --shortcut-only
+.\.venv\Scripts\python.exe scripts\build_windows.py --shortcut-only
 ```
 
 Windows에서 Python 3.13으로 프로젝트 전용 가상환경을 만듭니다.
@@ -68,19 +68,19 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe scripts\build_windows.py
 ```
 
-기존 실행파일을 사용 중이면 `scripts\build_windows.py --output-dir dist/0.7.6`으로 별도 빌드할 수 있습니다. 0.7.6 실행파일은 `dist/0.7.6/music-sorter.dist/main.exe`입니다. 실제 실행 검증 근거는 SPEC §17.13에서 확인합니다. 이전 버전을 종료한 뒤 루트 바로가기를 열면 기존 데이터와 등록 키를 사용합니다. 앱 데이터는 실행파일 폴더와 별도 보관합니다.
+빌드는 `build`의 임시 폴더에서 마친 뒤 `dist`를 통째로 교체합니다. 실행 중이면 앱 종료를 안내하고 기존 배포를 유지하며 교체·바로가기 갱신 실패 시 이전 배포로 복구합니다. 이전 결과는 `build`의 내부 복구 폴더에 보존합니다. `--output-dir`을 지정하면 같은 드라이브의 해당 폴더 바로 아래에 출력합니다. 실제 앱 검증 근거는 SPEC §17.13, 고정 경로 검증은 §17.14에서 확인합니다. 기존 사용자 데이터와 등록 키는 별도 보관하므로 빌드 교체 뒤에도 유지됩니다.
 
 등록된 키의 읽기 전용 실제 연결 검증은 아래처럼 명시적으로 실행합니다. 모델 목록 GET만 요청하며 키나 응답 원문은 출력하지 않습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\verify_connections.py --live --output artifacts\new-api-check\live.json
-.\dist\0.7.6\music-sorter.dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
+.\dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
 ```
 
-Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist/0.7.6/music-sorter.dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
+Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
 
 검증 출력 디렉터리는 새 이름으로 지정합니다. 음악 검증은 원본을 읽어 복사본을 만든 뒤 수행합니다. 벤치마크는 합성 DB이며 실제 음악 라이브러리의 처리 속도를 보증하지 않습니다.
 
 검토 집합은 같은 해시·녹음 관계를 묶고 조정 120/최종 80곡으로 고정합니다. 검토 사본의 별도 DB에서 사람이 각 항목을 수동 보호된 정답으로 저장한 뒤, 정답을 입력하지 않은 별도 모델 판정 DB와 비교합니다. `scripts/evaluate_classification.py --manifest <review-manifest.json> --gold-db <정답DB> --prediction-db <모델DB> --output <평가.json>`으로 항목별 정답률·확정 비율·태그 precision/recall을 계산합니다. 미검수·LLM 정답 초안·검증용 수동 입력을 실제 정답률로 보고하지 않습니다.
 
-빌드는 `pyside6-deploy`·Nuitka·설치된 Visual Studio C 도구를 사용합니다. 결과는 `dist/music-sorter.dist/main.exe`와 의존 파일이며 폴더 전체가 필요합니다. 생성 설정·검증 자료·실행 파일은 Git에서 제외합니다. 별도 Windows 환경 검증과 배포 라이선스 검토는 출시 전 과제입니다.
+빌드는 `pyside6-deploy`·Nuitka·설치된 Visual Studio C 도구를 사용합니다. 결과는 `dist/main.exe`와 의존 파일이며 `dist` 폴더 전체가 필요합니다. 생성 설정·검증 자료·실행 파일은 Git에서 제외합니다. 별도 Windows 환경 검증과 배포 라이선스 검토는 출시 전 과제입니다.

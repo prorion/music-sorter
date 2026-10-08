@@ -7,12 +7,74 @@ import shutil
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timezone
 from importlib.metadata import distribution
 from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from music_sorter import __version__
+
+
+def ensure_not_running(bundle):
+    """Refuse to replace any deployed runtime that Windows is still using."""
+    if os.name != 'nt':
+        return
+    environment = dict(os.environ, MUSIC_SORTER_BUNDLE_PREFIX=str(bundle.resolve()) + os.sep)
+    powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    command = """
+$ErrorActionPreference = 'Stop'
+$running = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:MUSIC_SORTER_BUNDLE_PREFIX, [StringComparison]::OrdinalIgnoreCase)
+})
+if ($running.Count -gt 0) { throw '배포 폴더의 앱을 종료한 뒤 다시 빌드하세요. 기존 배포는 유지됩니다.' }
+"""
+    subprocess.run([str(powershell), '-NoProfile', '-NonInteractive', '-Command', command],
+                   env=environment, check=True)
+
+
+def write_build_info(root, bundle, version):
+    commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, text=True,
+                            capture_output=True, check=True).stdout.strip()
+    dirty = subprocess.run(['git', 'diff', '--quiet', 'HEAD'], cwd=root).returncode
+    if dirty not in (0, 1):
+        raise RuntimeError('빌드의 Git 변경 상태를 확인할 수 없습니다.')
+    info = dict(version=version, source_commit=commit, tracked_changes=bool(dirty),
+                built_at_utc=datetime.now(timezone.utc).isoformat())
+    (bundle / 'build-info.json').write_text(json.dumps(info, indent=2), 'utf-8')
+
+
+def publish_bundle(root, bundle, output):
+    """Swap the entire runtime; restore the old one if publication fails."""
+    root, bundle, output = root.resolve(), bundle.resolve(), output.resolve()
+    if output == root or output in root.parents or bundle == output or bundle in output.parents or output in bundle.parents:
+        raise ValueError('프로젝트·임시 빌드와 분리된 출력 폴더를 지정하세요.')
+    if bundle.drive.lower() != output.drive.lower():
+        raise ValueError('폴더 교체와 복구를 위해 프로젝트와 같은 드라이브의 출력 폴더를 지정하세요.')
+    if not (bundle / 'main.exe').is_file() or not (bundle / 'DEPENDENCIES.json').is_file():
+        raise ValueError('실행파일과 의존성 고지가 완성된 빌드만 배포할 수 있습니다.')
+    if output.exists() and any(output.iterdir()) and not (
+            (output / 'main.exe').is_file() and (output / 'DEPENDENCIES.json').is_file()):
+        raise ValueError('기존 배포가 아닌 폴더는 교체하지 않습니다. 빈 폴더나 배포 폴더를 지정하세요.')
+    ensure_not_running(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    backup = root / 'build' / ('previous-bundle-' + uuid.uuid4().hex)
+    backup.parent.mkdir(exist_ok=True)
+    had_output = output.exists()
+    if had_output:
+        output.rename(backup)
+    try:
+        bundle.rename(output)
+        write_shortcut(root, output)
+    except BaseException:
+        if output.exists():
+            output.rename(bundle)
+        if had_output:
+            backup.rename(output)
+        raise
+    if had_output:
+        print(f'이전 배포 복구본: {backup}')
+    print(f'배포 실행파일: {output / "main.exe"}')
 
 
 def write_shortcut(root, bundle):
@@ -100,7 +162,7 @@ def write_notices(bundle, version):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--output-dir", type=Path, help="실행 중인 이전 빌드를 보존할 별도 출력 폴더")
+    parser.add_argument("--output-dir", type=Path, help="실행파일·DLL을 바로 아래에 둘 출력 폴더 (기본: dist)")
     parser.add_argument('--shortcut-only', action='store_true', help='기존 빌드를 가리키는 프로젝트 루트 바로가기만 생성')
     parser.add_argument('--notices-only', action='store_true', help='기존 빌드의 실제 설치 의존성·라이선스 목록만 작성')
     parser.add_argument('--bundle-version', help='기존 빌드 고지에 기록할 버전')
@@ -111,16 +173,20 @@ def main():
     output = args.output_dir.resolve() if args.output_dir else root / "dist"
     output.mkdir(parents=True, exist_ok=True)
     if args.shortcut_only:
-        write_shortcut(root, output / 'music-sorter.dist')
+        write_shortcut(root, output)
         return 0
     if args.notices_only:
-        write_notices(output / 'music-sorter.dist', args.bundle_version or __version__)
+        write_notices(output, args.bundle_version or __version__)
         return 0
+    if not args.dry_run:
+        ensure_not_running(output)
     build = root / "build"
     build.mkdir(exist_ok=True)
+    staging = build / ('windows-output-' + uuid.uuid4().hex)
+    staging.mkdir()
     config = configparser.ConfigParser()
     config["app"] = {"title": "music-sorter", "project_dir": str(root), "input_file": str(root / "main.py"),
-                     "exec_directory": str(output), "project_file": "", "icon": ""}
+                     "exec_directory": str(staging), "project_file": "", "icon": ""}
     config["python"] = {"python_path": sys.executable, "packages": "Nuitka==4.2.2"}
     config["qt"] = {"modules": "Core,Gui,Widgets,Multimedia", "plugins": "multimedia,platforms,imageformats,styles",
                     "qml_files": "", "excluded_qml_plugins": ""}
@@ -145,9 +211,10 @@ def main():
     result = subprocess.call(command, cwd=root)
     if result != 0 or args.dry_run:
         return result
-    bundle = output / "music-sorter.dist"
+    bundle = staging / "music-sorter.dist"
     write_notices(bundle, __version__)
-    write_shortcut(root, bundle)
+    write_build_info(root, bundle, __version__)
+    publish_bundle(root, bundle, output)
     return 0
 
 
