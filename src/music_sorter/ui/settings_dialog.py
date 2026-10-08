@@ -63,27 +63,27 @@ class SettingsDialog(QDialog):
         choose = QPushButton("폴더 선택")
         choose.clicked.connect(self.choose_root)
         row.addWidget(choose)
-        music.addRow("음악 루트", root_row)
+        music.addRow("음악 폴더", root_row)
         self.recursive = QCheckBox("하위 폴더 포함")
         self.recursive.setChecked(settings.include_subfolders)
         music.addRow(self.recursive)
         self.exclusions = QPlainTextEdit('\n'.join(settings.scan_exclude_folders))
-        self.exclusions.setPlaceholderText('음악 루트 아래 상대 폴더 · 한 줄에 하나 · 예: 개인 녹음')
+        self.exclusions.setPlaceholderText('음악 폴더 아래 상대 폴더 · 한 줄에 하나 · 예: 개인 녹음')
         self.exclusions.setMaximumHeight(90)
         music.addRow('스캔 제외 폴더', self.exclusions)
         self.tolerance = QDoubleSpinBox()
         self.tolerance.setRange(0, 30)
         self.tolerance.setValue(settings.duplicate_tolerance_seconds)
         self.tolerance.setSuffix(" 초")
-        music.addRow("중복 길이 허용값", self.tolerance)
-        music.addRow(self.note("전체 파일 SHA-256 검증 · 정션/심볼릭 링크 제외\n데이터·복구 메뉴에서 DB를 새 위치로 이관할 수 있습니다."))
+        music.addRow("같은 곡으로 볼 재생 시간 차이", self.tolerance)
+        music.addRow(self.note("파일 내용으로 변경 여부를 확인합니다. 다른 위치로 연결된 폴더 바로가기는 제외합니다.\n분류와 작업 기록의 저장 위치는 데이터·복구 메뉴에서 변경할 수 있습니다."))
         database = QGroupBox('사용 중인 데이터베이스')
         database_layout = QVBoxLayout(database)
         self.db_path = self.storage_path(database_layout, 'DB 파일', library.path, library.path.parent)
-        database_layout.addWidget(self.note('분류·작업 이력을 저장하는 SQLite DB입니다.\n기본 위치는 Windows 사용자 앱 데이터이며 프로그램 업데이트 후에도 유지됩니다.'))
+        database_layout.addWidget(self.note('분류와 작업 기록을 보관하는 파일입니다.\n기본 위치는 Windows 사용자 앱 데이터이며 프로그램 업데이트 후에도 유지됩니다.'))
         music.addRow(database)
 
-        api = self.page("LLM / API 연결")
+        api = self.page("AI / API 연결")
         api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n연결 확인은 모델 목록만 조회합니다. 음악 전송·분류 요청은 하지 않습니다."))
         if CredentialStore.profile_keys is not None:
             api.addRow(self.note('명시적 개발 프로필/프로세스 환경 변수의 세션 키를 사용 중입니다.\n자격 증명 저장소의 키는 섞지 않습니다. 키 등록·삭제는 기본 모드에서 진행하세요.'))
@@ -137,8 +137,8 @@ class SettingsDialog(QDialog):
 
         classification = self.page("분류와 비용")
         self.providers, self.models = [], []
-        for prefix, provider, model in (("1차", settings.classify_provider, settings.classify_model),
-                                         ("재판정", settings.escalate_provider, settings.escalate_model)):
+        for prefix, provider, model in (("처음 분류", settings.classify_provider, settings.classify_model),
+                                         ("다시 분류", settings.escalate_provider, settings.escalate_model)):
             combo = QComboBox()
             combo.addItem("Claude", "anthropic")
             combo.addItem("OpenAI", "openai")
@@ -152,75 +152,75 @@ class SettingsDialog(QDialog):
             classification.addRow(f"{prefix} 서비스", combo)
             classification.addRow(f"{prefix} 모델 ID", edit)
             combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
-        classification.addRow(self.note("API 연결 메뉴에서 조회한 모델을 목록에서 선택하거나 ID를 직접 입력하세요.\n목록 조회 성공은 선택 모델의 분류·구조화 출력·Batch·잔액 확인을 뜻하지 않습니다."))
-        classification.addRow(self.note("라이브러리의 분류 실행에서 대상·목적·동기/Batch·작업별 USD 예산을 선택합니다.\n가사는 기본 제외하며 미확정 재판정에서만 입력 내용을 확인한 뒤 선택합니다.\n모델 신뢰도는 정답 확률이 아닙니다. 내장 확인 단가가 없는 모델은 제출을 보류합니다."))
-        catalog = QPushButton('분류 태그 목록·제안 승인')
+        classification.addRow(self.note("AI / API 연결에서 불러온 모델을 선택하거나 모델 ID를 직접 입력하세요.\n연결 확인은 모델 목록 조회입니다. 실제 분류 가능 여부와 서비스 잔액은 실행할 때 확인합니다."))
+        classification.addRow(self.note("음악 목록의 「AI로 분류」에서 곡·처리 방법·예산(미국 달러)을 선택합니다.\n가사는 기본적으로 보내지 않으며, 다시 분류할 때만 선택해서 보낼 수 있습니다.\n요금 정보를 확인하지 못한 모델은 실행할 수 없습니다. AI 결과는 틀릴 수 있어 확인이 필요합니다."))
+        catalog = QPushButton('분류 이름 관리')
         catalog.clicked.connect(self.open_catalog)
         classification.addRow(catalog)
         self.advanced = {}
-        for title, name, low, high in [('요청 한 묶음의 곡 수', 'llm_tracks_per_request', 1, 20),
-                                       ('곡당 최대 출력 토큰', 'llm_max_output_tokens_per_track', 256, 2000),
-                                       ('생성 요청 제한 시간 (초)', 'llm_timeout_seconds', 10, 180),
-                                       ('처리 전 제한 오류의 추가 재시도', 'llm_max_retries', 0, 3)]:
+        for title, name, low, high in [('한 번에 AI로 보낼 곡 수', 'llm_tracks_per_request', 1, 20),
+                                       ('곡당 AI 응답 길이 한도 (토큰)', 'llm_max_output_tokens_per_track', 256, 2000),
+                                       ('AI 응답 대기 시간 (초)', 'llm_timeout_seconds', 10, 180),
+                                       ('요청 한도 초과 시 추가 시도 횟수', 'llm_max_retries', 0, 3)]:
             control = QSpinBox()
             control.setRange(low, high)
             control.setValue(getattr(settings, name))
             self.advanced[name] = control
             classification.addRow(title, control)
-        self.lyrics_default = QCheckBox('미확정 재판정에서 기존 ID3 가사 사용을 기본 선택')
+        self.lyrics_default = QCheckBox('다시 분류할 때 저장된 가사를 보내도록 기본 선택')
         self.lyrics_default.setChecked(settings.include_lyrics_default)
         classification.addRow(self.lyrics_default)
-        classification.addRow(self.note('요청 동시성은 1입니다. 시간 초과·서버 오류·처리 불확실은 자동 재전송하지 않습니다.\n출력 제한이 낮으면 결과가 잘려 검증에 실패할 수 있습니다. 변경은 새 작업부터 적용합니다.'))
+        classification.addRow(self.note('AI 요청은 한 번에 하나씩 보냅니다. 응답이 없거나 서버 오류가 나면 자동으로 다시 보내지 않습니다.\n토큰은 AI 응답의 길이를 세는 단위입니다. 한도가 낮으면 결과가 잘릴 수 있습니다. 변경은 새 작업부터 적용합니다.'))
 
-        external = self.page("외부 음악 정보")
+        external = self.page("인터넷 곡 정보")
         self.musicbrainz_enabled = QCheckBox('MusicBrainz 정보 조회')
         self.musicbrainz_enabled.setChecked(settings.musicbrainz_enabled)
         external.addRow(self.musicbrainz_enabled)
         self.musicbrainz_contact = QLineEdit(settings.musicbrainz_contact)
-        self.musicbrainz_contact.setPlaceholderText('요청 User-Agent에 사용할 이메일 또는 HTTPS URL')
+        self.musicbrainz_contact.setPlaceholderText('문의 받을 이메일 또는 웹사이트 주소')
         external.addRow('MusicBrainz 연락처', self.musicbrainz_contact)
         self.lastfm_enabled = QCheckBox('Last.fm 곡 정보·참고 태그 조회')
         self.lastfm_enabled.setChecked(settings.lastfm_enabled)
         external.addRow(self.lastfm_enabled)
-        external.addRow(self.note('정보 보완 버튼에서 실행하며 입력·출처·시각을 캐시합니다.\nMusicBrainz는 연락처가 없으면, Last.fm은 키가 없으면 건너뜁니다.\n제목·아티스트·버전이 다른 후보는 자동 연결하지 않습니다.'))
+        external.addRow(self.note('「곡 정보 찾기」에서 조회하며 찾은 정보를 앱에 저장해 다음 조회에 재사용합니다.\nMusicBrainz는 연락처가 없으면, Last.fm은 키가 없으면 건너뜁니다.\n제목·아티스트·버전이 다른 후보는 자동 연결하지 않습니다.'))
         output = self.page("파일 정리·재생목록")
         self.rollback_limit = QDoubleSpinBox()
         self.rollback_limit.setRange(.1, 10000)
         self.rollback_limit.setValue(settings.rollback_limit_gib)
         self.rollback_limit.setSuffix(' GiB')
-        output.addRow('ID3 원본 복구 보관 한도', self.rollback_limit)
+        output.addRow('파일 정보 복구 자료 보관 한도', self.rollback_limit)
         self.playlist_format = QComboBox()
         self.playlist_format.addItem('UTF-8 M3U8 · PC 추천', 'm3u8')
         self.playlist_format.addItem('UTF-8 M3U · 기존 앱용', 'm3u')
         self.playlist_format.setCurrentIndex(self.playlist_format.findData(settings.playlist_format))
         output.addRow('재생목록 형식', self.playlist_format)
         output.addRow(self.note('곰오디오는 M3U8의 한글 경로·장르·재생을 확인했습니다.\nM3U는 곰오디오에서 한글 경로가 깨질 수 있습니다. 삼성 뮤직은 장치 검증 전입니다.\n형식 변경만으로 이전 목록을 지우거나 변경하지 않습니다. 다음 목록 생성부터 적용합니다.'))
-        output.addRow(self.note("라이브러리의 파일 정리 미리보기에서 폴더·이름·장르 기록을 각각 선택합니다.\n실제 적용은 미리보기 확인 뒤 실행하며 작업 이력에서 되돌릴 수 있습니다.\n재생목록 메뉴에서 기본 목록과 조건 조합 목록을 생성합니다. UTF-8·CRLF·상대 경로를 사용합니다.\n복구 자료는 자동 삭제하지 않습니다. 자동 DB 백업은 하루 첫 적용 전 생성하고 최근 7개를 보관합니다."))
+        output.addRow(self.note("「파일 정리 미리보기」에서 폴더·파일 이름·장르 변경을 선택합니다.\n미리보기를 확인한 뒤 실제로 바꾸며 작업 기록에서 되돌릴 수 있습니다.\n재생목록은 음악 폴더와 함께 옮겨 사용할 수 있습니다.\n파일 복구 자료는 자동으로 지우지 않습니다. 분류·작업 기록은 하루 첫 변경 전에 백업하고 최근 7개를 보관합니다."))
         data = self.page("데이터·복구")
         storage = QGroupBox('사용자 데이터 위치')
         storage_layout = QVBoxLayout(storage)
         self.data_path = self.storage_path(storage_layout, '데이터 폴더', config_path.parent, config_path.parent)
-        storage_layout.addWidget(self.note('설정·DB·백업·복구 자료를 보관합니다.\n백업은 DB 사본이며 음악 파일을 포함하지 않습니다. 위치 변경은 아래 데이터 이관 기능을 사용하세요.'))
+        storage_layout.addWidget(self.note('설정·분류·작업 기록과 백업·복구 자료를 보관합니다.\n백업에는 음악 파일을 포함하지 않습니다. 저장 위치를 바꾸려면 아래 「새 폴더로 데이터 복사」를 이용하세요.'))
         data.addRow(storage)
-        backup = QPushButton("검증된 DB 백업 만들기")
+        backup = QPushButton("분류·작업 기록 백업")
         backup.clicked.connect(self.backup)
         data.addRow(backup)
         self.data_buttons = []
-        for title, action in (('DB 사본 검증·복원', self.restore_database), ('데이터 이관 사본 만들기', self.migrate_data),
-                              ('검증된 이관 위치를 다음 실행부터 사용', self.activate_data),
-                              ('비밀값·개인정보 제외 설정 내보내기', self.export_preferences), ('.env의 설정·키 가져오기', self.import_profile)):
+        for title, action in (('백업에서 분류·작업 기록 복원', self.restore_database), ('새 폴더로 데이터 복사', self.migrate_data),
+                              ('복사한 폴더를 다음 실행부터 사용', self.activate_data),
+                              ('개인정보를 뺀 설정 내보내기', self.export_preferences), ('.env의 설정·키 가져오기', self.import_profile)):
             button = QPushButton(title)
             button.clicked.connect(action)
             data.addRow(button)
             self.data_buttons.append(button)
         if CredentialStore.profile_keys is not None:
             self.data_buttons[-1].setEnabled(False)
-        self.data_status = self.note('음악 파일 복구는 작업 이력의 파일 정리 항목을 두 번 클릭해 진행합니다.\nDB 복원은 음악 파일을 바꾸지 않으며 복원 후 재스캔이 필요합니다. 이관은 기존 위치를 보존합니다.')
+        self.data_status = self.note('음악 파일 변경을 되돌리려면 작업 기록에서 파일 정리를 두 번 클릭하세요.\n여기서는 저장된 분류·작업 기록만 복원합니다. 복원 후 음악 폴더를 다시 스캔해야 합니다. 데이터 복사는 기존 폴더를 보존합니다.')
         data.addRow(self.data_status)
         with library.connection() as db:
             cache = db.execute('SELECT count(*) FROM external_cache').fetchone()[0]
             responses = db.execute('SELECT count(*) FROM llm_cache').fetchone()[0]
-        data.addRow(self.note(f'외부 조회 캐시 {cache:,}건 · 분류 결과 캐시 {responses:,}건\n작업 결과와 오류는 작업 이력에서 확인할 수 있습니다. 키·API 오류 원문은 이력에 저장하지 않습니다.'))
+        data.addRow(self.note(f'저장된 인터넷 곡 정보 {cache:,}건 · 저장된 AI 응답 {responses:,}건\n작업 결과와 오류는 작업 이력에서 확인할 수 있습니다. 키·API 오류 원문은 이력에 저장하지 않습니다.'))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Ok)
         self.buttons = buttons
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
@@ -304,7 +304,7 @@ class SettingsDialog(QDialog):
         return layout
 
     def choose_root(self):
-        selected = QFileDialog.getExistingDirectory(self, "음악 루트 선택", self.root.text())
+        selected = QFileDialog.getExistingDirectory(self, "음악 폴더 선택", self.root.text())
         if selected:
             self.root.setText(selected)
 
@@ -478,9 +478,9 @@ class SettingsDialog(QDialog):
         name = now().replace(":", "-").replace("+", "_") + ".sqlite3"
         try:
             self.library.backup(self.config_path.parent / "backups" / name)
-            QMessageBox.information(self, "DB 백업 완료", "일관된 DB 사본의 무결성을 확인했습니다.")
+            QMessageBox.information(self, "분류·작업 기록 백업 완료", "분류와 작업 기록을 백업하고 읽을 수 있는지 확인했습니다. 음악 파일은 백업에 포함하지 않습니다.")
         except Exception:
-            QMessageBox.warning(self, "백업 보류", "백업 경로·공간·DB 상태를 확인하세요.")
+            QMessageBox.warning(self, "백업 실패", "백업 폴더의 접근 권한과 저장 공간을 확인하세요.")
 
     def data_start(self, action, callback):
         if self.connection_busy():
@@ -493,7 +493,7 @@ class SettingsDialog(QDialog):
         self.data_worker.finished.connect(self.data_finished)
         for button in self.data_buttons:
             button.setEnabled(False)
-        self.data_status.setText('데이터 무결성·복구 자료를 확인하고 있습니다. 완료 결과는 아래에 표시됩니다.')
+        self.data_status.setText('저장된 기록과 복구 자료를 읽을 수 있는지 확인하고 있습니다. 완료 후 결과를 표시합니다.')
         self.data_worker.start()
 
     def data_finished(self):
@@ -508,7 +508,7 @@ class SettingsDialog(QDialog):
     def restore_database(self):
         if self.connection_busy():
             return
-        path, _ = QFileDialog.getOpenFileName(self, '복원할 DB 사본 선택', str(self.config_path.parent / 'backups'), 'SQLite (*.sqlite3 *.db)')
+        path, _ = QFileDialog.getOpenFileName(self, '분류·작업 기록 백업 선택', str(self.config_path.parent / 'backups'), '백업 파일 (*.sqlite3 *.db)')
         if not path:
             return
         from ..maintenance import prepare_restore
@@ -519,13 +519,13 @@ class SettingsDialog(QDialog):
         from PySide6.QtCore import QTimer
         def confirm():
             report = plan['report']
-            text = f"검증한 DB: {report['tracks']:,}곡 · 스키마 {report['schema']}\n현재 DB는 별도 백업하고 교체합니다. 음악 파일은 그대로이며 복원 후 재스캔이 필요합니다.\n이 준비 사본으로 복원할까요?"
-            if QMessageBox.question(self, '검증된 DB 복원', text, defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-                self.data_status.setText('복원 준비 사본을 보존했습니다. 현재 DB는 변경하지 않았습니다.')
+            text = f"백업에 등록된 곡: {report['tracks']:,}곡\n현재 분류와 작업 기록은 별도로 백업한 뒤 교체합니다. 음악 파일은 그대로 두며 복원 후 음악 폴더를 다시 스캔해야 합니다.\n이 백업으로 복원할까요?"
+            if QMessageBox.question(self, '분류·작업 기록 복원', text, defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                self.data_status.setText('복원용 사본을 보존했습니다. 현재 분류와 작업 기록은 바뀌지 않았습니다.')
                 return
             from ..maintenance import apply_restore
             def done(result):
-                self.data_status.setText(f"DB {result['tracks']:,}곡 복원 완료. 재스캔 전 파일 변경·분류 제출을 보류합니다. 이전 DB 백업을 보존했습니다.")
+                self.data_status.setText(f"{result['tracks']:,}곡의 기록을 복원했습니다. 음악 폴더를 다시 스캔한 뒤 파일 정리·AI 분류를 실행하세요. 이전 기록의 백업은 보존했습니다.")
                 if hasattr(self.parent(), 'refresh'):
                     self.parent().refresh()
             self.data_start(lambda: apply_restore(self.library, plan), done)
@@ -534,21 +534,21 @@ class SettingsDialog(QDialog):
     def migrate_data(self):
         if self.connection_busy():
             return
-        path = QFileDialog.getExistingDirectory(self, '이관 사본을 만들 비어 있는 로컬 폴더 선택')
+        path = QFileDialog.getExistingDirectory(self, '데이터를 복사할 비어 있는 폴더 선택')
         if not path:
             return
         from ..maintenance import migrate_copy
         def done(result):
-            self.data_status.setText(f"DB {result['report']['tracks']:,}곡 · 복구 자료 {result['rollback_files']:,}개를 검증해 복사했습니다.\n새 위치: {result['destination']}\n검증된 이관 위치 사용 버튼으로 다음 실행부터 이 위치를 선택할 수 있습니다.")
+            self.data_status.setText(f"{result['report']['tracks']:,}곡의 기록과 복구 자료 {result['rollback_files']:,}개를 확인해 복사했습니다.\n새 위치: {result['destination']}\n「복사한 폴더를 다음 실행부터 사용」을 누르면 앱을 다시 열 때 새 위치를 사용합니다.")
         self.data_start(lambda: migrate_copy(self.library, self.settings, Path(path)), done)
 
     def activate_data(self):
         if self.connection_busy():
             return
-        path = QFileDialog.getExistingDirectory(self, '검증한 이관 폴더 선택')
+        path = QFileDialog.getExistingDirectory(self, '앞에서 데이터를 복사한 폴더 선택')
         if not path:
             return
-        if QMessageBox.question(self, '다음 실행 데이터 위치', f'다음 실행부터 다음 데이터 위치를 사용할까요?\n{path}\n기존 DB·복구 자료는 보존합니다. 현재 앱은 기존 위치를 사용합니다.',
+        if QMessageBox.question(self, '다음 실행 데이터 위치', f'앱을 다시 열 때 다음 폴더의 데이터를 사용할까요?\n{path}\n기존 분류·작업 기록과 복구 자료는 보존합니다. 지금은 기존 폴더를 계속 사용합니다.',
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         from ..settings import activate_data_directory
@@ -582,7 +582,7 @@ class SettingsDialog(QDialog):
                 return
             if profile.settings.music_root:
                 if not Path(profile.settings.music_root).is_dir():
-                    raise ValueError('음악 루트 폴더를 찾을 수 없습니다.')
+                    raise ValueError('음악 폴더 폴더를 찾을 수 없습니다.')
                 self.library.bind_root(Path(profile.settings.music_root))
             for provider, key in profile.keys.items():
                 self.vault.set(provider, key)
@@ -594,4 +594,4 @@ class SettingsDialog(QDialog):
         except Exception:
             for provider in self.key_states:
                 self.refresh_key(provider)
-            QMessageBox.warning(self, '가져오기 보류', '프로필 형식·음악 루트·자격 증명 저장소를 확인하세요. 일부 키가 먼저 등록됐다면 유지되며 원본 프로필은 보존했습니다.')
+            QMessageBox.warning(self, '가져오기 보류', '프로필 형식·음악 폴더·자격 증명 저장소를 확인하세요. 일부 키가 먼저 등록됐다면 유지되며 원본 프로필은 보존했습니다.')

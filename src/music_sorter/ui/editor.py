@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QListW
 
 from ..classification import AXES, LABELS, TAXONOMY
 from ..catalog import options as catalog_options
+from .wording import SOURCES, readable
 
 
 class Choices(QWidget):
@@ -14,9 +15,9 @@ class Choices(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.unknown = QCheckBox("미확정")
+        self.unknown = QCheckBox("확인 필요")
         self.unknown.setChecked(True)
-        self.none = QCheckBox("검토했으나 해당 태그 없음")
+        self.none = QCheckBox("확인했지만 해당되는 분류 없음")
         self.none.setVisible(False)
         self.list = QListWidget()
         self.list.setMaximumHeight(88)
@@ -77,7 +78,7 @@ class TrackEditor(QWidget):
         self.title.setWordWrap(True)
         self.title.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(self.title)
-        self.metadata = QLabel("파일은 그대로 유지하고 판정만 DB에 저장합니다.")
+        self.metadata = QLabel("분류는 앱에 저장합니다. 음악 파일은 변경하지 않습니다.")
         self.metadata.setWordWrap(True)
         self.metadata.setObjectName("subtle")
         self.metadata.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -89,16 +90,16 @@ class TrackEditor(QWidget):
             row.addWidget(edit)
             protection = QLabel()
             row.addStretch()
-            unlock = QPushButton("보호 해제")
+            unlock = QPushButton("자동 수정 허용")
             unlock.setObjectName("ghost")
-            unlock.setToolTip("자동 분류로 되돌리기 · API 호출 없이 보호만 해제")
+            unlock.setToolTip("이 항목을 다음 AI 분류에서 수정할 수 있게 합니다. 지금 분류를 실행하지는 않습니다.")
             unlock.clicked.connect(lambda _, a=axis: self.unlock(a))
             row.addWidget(unlock)
             layout.addLayout(row)
             layout.addWidget(protection)
             if axis in {"major", "vocal"}:
                 field = QComboBox()
-                field.addItem("미확정", None)
+                field.addItem("확인 필요", None)
                 for option in TAXONOMY[axis]:
                     field.addItem(option, option)
                 field.currentIndexChanged.connect(lambda _, a=axis: self.edited(a))
@@ -107,17 +108,17 @@ class TrackEditor(QWidget):
                 field.changed.connect(lambda a=axis: self.edited(a))
             layout.addWidget(field)
             self.fields[axis], self.edits[axis], self.protection[axis] = field, edit, protection
-        self.hint = QLabel("수정할 항목만 체크해서 저장하세요. 빈 컨셉의 확정과 미확정을 구분합니다.")
+        self.hint = QLabel("바꿀 항목을 선택하고 저장하세요. 해당되는 컨셉이 없으면 「해당되는 분류 없음」을 선택하세요.")
         self.hint.setWordWrap(True)
         layout.addWidget(self.hint)
-        self.save_button = QPushButton("DB에 저장")
+        self.save_button = QPushButton("분류 저장")
         self.save_button.setProperty("primary", True)
         self.save_button.clicked.connect(self.save)
         layout.addWidget(self.save_button)
-        self.review_button = QPushButton("외부 변경 검토")
+        self.review_button = QPushButton("앱 밖에서 바뀐 파일 확인")
         self.review_button.clicked.connect(lambda: self.external_review.emit(self.current["id"]) if self.current else None)
         layout.addWidget(self.review_button)
-        self.history_button = QPushButton('분류 판정 이력·되돌리기')
+        self.history_button = QPushButton('분류 변경 기록·되돌리기')
         self.history_button.clicked.connect(self.open_history)
         layout.addWidget(self.history_button)
         layout.addStretch()
@@ -141,7 +142,7 @@ class TrackEditor(QWidget):
         self.loading = False
         if incompatible:
             self.edits["subgenre"].setChecked(True)
-            self.hint.setText("대분류 변경으로 세부 장르가 맞지 않아 미확정으로 표시했습니다. 새 세부 장르를 선택하거나 미확정 상태로 저장하세요.")
+            self.hint.setText("새 대분류에 맞지 않는 세부 장르는 다시 선택해야 합니다. 새 장르를 선택하거나 「확인 필요」로 저장하세요.")
 
     def load_track(self, track):
         self.loading = True
@@ -162,13 +163,13 @@ class TrackEditor(QWidget):
                 options = catalog_options(axis, major, data['value'])
                 field.populate(options, data["value"], axis == "concept")
             self.edits[axis].setChecked(False)
-            status = {"unclassified": "미분류", "unresolved": "미확정", "confirmed": "확정"}[data["status"]]
-            self.protection[axis].setText(f"{'🔒 수동 보호' if data['protected'] else '자동 가능'} · {status}")
-            self.protection[axis].setToolTip(f"출처: {data['source'] or '없음'}\n근거: {data['reason']}")
+            status = {"unclassified": "미분류", "unresolved": "확인 필요", "confirmed": "확정"}[data["status"]]
+            self.protection[axis].setText(f"{'🔒 직접 수정한 분류' if data['protected'] else 'AI 수정 가능'} · {status}")
+            self.protection[axis].setToolTip(f"분류한 방법: {SOURCES.get(data['source'], data['source'] or '없음')}\n이유: {readable(data['reason'])}")
         self.save_button.setEnabled(track["file_state"] == "ready")
-        self.review_button.setText("연결 보류 검토" if track["file_state"] == "link_pending" else "외부 변경 검토")
+        self.review_button.setText("이전 곡 기록과 비교" if track["file_state"] == "link_pending" else "앱 밖에서 바뀐 파일 확인")
         self.review_button.setVisible(track["file_state"] in {"external_change", "link_pending"})
-        self.hint.setText("선택한 항목만 DB에 저장합니다. 음악 파일은 변경하지 않습니다.")
+        self.hint.setText("선택한 항목의 분류만 저장합니다. 음악 파일은 변경하지 않습니다.")
         self.loading = False
 
     def dirty(self):
@@ -178,7 +179,7 @@ class TrackEditor(QWidget):
         if not self.current:
             return
         if self.dirty():
-            QMessageBox.information(self, '수정 중', '미저장 수정을 먼저 저장하거나 취소하세요.')
+            QMessageBox.information(self, '수정 중', '수정한 내용을 먼저 저장하거나 취소하세요.')
             return
         from .history_dialog import HistoryDialog
         dialog = HistoryDialog(self.library, self.current['id'], self)
@@ -203,7 +204,7 @@ class TrackEditor(QWidget):
         if not self.current:
             return
         if self.dirty():
-            QMessageBox.information(self, "수정 중", "미저장 수정을 먼저 저장하거나 취소하세요.")
+            QMessageBox.information(self, "수정 중", "수정한 내용을 먼저 저장하거나 취소하세요.")
             return
         self.library.unlock(self.current["id"], axis)
         self.load_track(self.library.track(self.current["id"]))

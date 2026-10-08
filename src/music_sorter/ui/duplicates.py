@@ -19,7 +19,7 @@ class DuplicateDialog(QDialog):
             root = saved[0] if saved else None
         self.removal = DuplicateRemoval(library, Path(root), tolerance) if root else None
         self.worker = None
-        self.setWindowTitle("중복 후보 비교")
+        self.setWindowTitle("중복 곡 비교")
         self.resize(1150, 700)
         layout = QVBoxLayout(self)
         intro = QLabel("제목·아티스트·버전·길이로 찾은 후보입니다. 직접 듣고 판단하세요. 추천은 음질 보증이 아닙니다.")
@@ -30,7 +30,7 @@ class DuplicateDialog(QDialog):
         self.group_list.setMaximumWidth(280)
         self.group_list.setWordWrap(True)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["유지", "추천 근거", "길이", "음질", "제목", "현재 파일"])
+        self.table.setHorizontalHeaderLabels(["유지", "추천 이유", "길이", "음질", "제목", "현재 파일"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -44,7 +44,7 @@ class DuplicateDialog(QDialog):
         layout.addWidget(self.player)
         actions = QHBoxLayout()
         self.action_buttons = []
-        for title, callback in (("선택한 파일 유지 · DB에 기록", self.keep), ("서로 다른 녹음", self.distinct), ("판단 보류 · 닫기", self.reject)):
+        for title, callback in (("체크한 파일을 남기기로 저장", self.keep), ("중복 아님으로 표시", self.distinct), ("나중에 확인·닫기", self.reject)):
             button = QPushButton(title)
             button.setProperty('primary', callback == self.keep)
             button.clicked.connect(callback)
@@ -58,7 +58,7 @@ class DuplicateDialog(QDialog):
         actions.addWidget(self.delete_button)
         self.action_buttons.append(self.delete_button)
         layout.addLayout(actions)
-        self.status = QLabel('유지할 파일은 체크하세요. 삭제할 파일은 행을 선택하세요(Ctrl/Shift로 여러 개).\n유지 기록의 이동은 파일 정리 미리보기에서 적용합니다. 삭제 복원은 Windows 휴지통 → 폴더 스캔입니다.')
+        self.status = QLabel('유지할 파일은 체크하세요. 삭제할 파일은 행을 선택하세요(Ctrl/Shift로 여러 개).\n남길 파일을 저장해도 파일 위치는 바뀌지 않습니다. 별도 폴더 정리는 파일 정리에서 실행하세요. 삭제 복원은 Windows 휴지통에서 한 뒤 폴더를 스캔하세요.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.group_list.currentRowChanged.connect(self.show_group)
@@ -93,9 +93,9 @@ class DuplicateDialog(QDialog):
             check.setCheckState(Qt.CheckState.Unchecked)
             self.table.setItem(i, 0, check)
             identical = all(t["hash"] == track["hash"] for t in tracks)
-            values = ["추천 · 태그/음질" if track["id"] == recommended["id"] else "",
+            values = ["추천 · 곡 정보/음질" if track["id"] == recommended["id"] else "",
                       f"{track['duration']:.1f}초", f"{(track['bitrate'] or 0)//1000}k / {track['sample_rate']}Hz",
-                      track["title"] + (" · 동일 바이트" if identical else ""), track["path"]]
+                      track["title"] + (" · 파일 내용 동일" if identical else ""), track["path"]]
             for column, value in enumerate(values, 1):
                 if column == 5:
                     path = Path(track["path"])

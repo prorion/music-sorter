@@ -1,12 +1,13 @@
 import json
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                              QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout)
+                              QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout)
 
 from ..database import now
 from ..external import ExternalLookup
 from ..settings import CredentialStore
 from .operations import OperationWorker
+from .wording import PROVIDERS, readable
 
 
 class ExternalDialog(QDialog):
@@ -15,13 +16,13 @@ class ExternalDialog(QDialog):
         self.library, self.settings, self.selected, self.filters = library, settings, list(selected), filters
         self.worker = None
         self.offset = 0
-        self.setWindowTitle('외부 음악 정보 · 조회와 식별')
+        self.setWindowTitle('인터넷에서 곡 정보 찾기')
         self.resize(1000, 700)
         layout = QVBoxLayout(self)
-        heading = QLabel('외부 음악 정보')
+        heading = QLabel('인터넷 곡 정보')
         heading.setObjectName('pageTitle')
         layout.addWidget(heading)
-        note = QLabel('MusicBrainz 녹음 식별과 Last.fm 참고 태그를 캐시합니다.\n모호한 후보의 정보를 LLM 근거로 자동 전달하지 않습니다. 조회·갱신만으로 곡의 분류를 변경하지 않습니다.')
+        note = QLabel('MusicBrainz와 Last.fm에서 곡 정보와 참고 장르를 찾습니다.\n같은 곡인지 확실하지 않으면 직접 확인해야 합니다. 이 조회만으로 기존 분류나 음악 파일이 바뀌지는 않습니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
         form = QHBoxLayout()
@@ -29,12 +30,12 @@ class ExternalDialog(QDialog):
         for title, value in ((f'선택한 {len(selected)}곡', 'selected'), ('검색·필터 전체', 'filtered'), ('라이브러리 전체', 'all')):
             self.scope.addItem(title, value)
         form.addWidget(self.scope)
-        self.force = QCheckBox('기존 캐시도 새로 조회')
+        self.force = QCheckBox('이전에 찾은 정보도 다시 검색')
         form.addWidget(self.force)
         form.addStretch()
         layout.addLayout(form)
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(['곡', '출처', '식별·조회 상태'])
+        self.table.setHorizontalHeaderLabels(['곡', '출처', '조회 결과'])
         self.table.setColumnWidth(0, 330)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -53,7 +54,7 @@ class ExternalDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
-        self.start_button = QPushButton('선택 범위 정보 조회')
+        self.start_button = QPushButton('곡 정보 찾기')
         self.start_button.setProperty('primary', True)
         self.start_button.clicked.connect(self.start)
         self.stop = QPushButton('조회 중단')
@@ -83,13 +84,13 @@ class ExternalDialog(QDialog):
         states = dict(matched='녹음 연결', reference='참고 태그', ambiguous='연결 보류', not_found='결과 없음', skipped='건너뜀', failed='조회 오류')
         for i, (track, service, result) in enumerate(self.rows):
             state = states.get(result['state'], result['state']) if result else '미조회'
-            for j, value in enumerate((track['title'] + ' · ' + track['artist'], service, state)):
+            for j, value in enumerate((track['title'] + ' · ' + track['artist'], PROVIDERS.get(service, service), state)):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
                 self.table.setItem(i, j, item)
         self.previous.setEnabled(self.offset > 0 and not self.worker)
         self.next.setEnabled(self.offset + len(tracks) < total and not self.worker)
-        self.page_label.setText(f'{self.offset + 1 if tracks else 0}–{self.offset + len(tracks)} / {total:,}곡 · 두 번 클릭: 후보·근거')
+        self.page_label.setText(f'{self.offset + 1 if tracks else 0}–{self.offset + len(tracks)} / {total:,}곡 · 두 번 클릭: 찾은 곡 비교·선택')
 
     def turn_page(self, delta):
         if not self.worker:
@@ -101,34 +102,52 @@ class ExternalDialog(QDialog):
             return
         track, service, result = self.rows[row]
         dialog = QDialog(self)
-        dialog.setWindowTitle('외부 식별 후보·조회 근거')
+        dialog.setWindowTitle('찾은 곡 비교·선택')
         dialog.resize(900, 660)
         layout = QVBoxLayout(dialog)
         details = QTextEdit()
         details.setReadOnly(True)
-        details.setPlainText(json.dumps(dict(file=dict(title=track['title'], artist=track['artist'], album=track['album'], version=track['version'], duration=track['duration']),
-                                            service=service, result=result), ensure_ascii=False, indent=2))
-        layout.addWidget(details, 1)
+        lines = [f"곡: {track['title']} · {track['artist']}", f"조회 사이트: {PROVIDERS.get(service, service)}"]
+        if result:
+            lines.append('조회 안내: ' + readable(result.get('reason', '')))
+            if result.get('tags'):
+                lines.append('참고 분류: ' + ' · '.join(str(tag) for tag in result['tags']))
+            for item in result.get('evidence', []):
+                lines.append(' · '.join(str(item[key]) for key in ('title', 'artist', 'album', 'tags', 'match_reason') if item.get(key)))
+            for candidate in result.get('candidates', []):
+                lines.append('\n찾은 곡: ' + ' · '.join(str(candidate.get(key, '')) for key in ('title', 'artist') if candidate.get(key)))
+                lines.append('앨범: ' + (' / '.join(candidate.get('albums', [])) or '정보 없음'))
+        else:
+            lines.append('아직 조회한 정보가 없습니다. 먼저 곡 정보 찾기를 실행하세요.')
+        details.setPlainText('\n'.join(lines))
+        tabs = QTabWidget()
+        tabs.addTab(details, '찾은 곡 정보')
+        raw = QTextEdit()
+        raw.setReadOnly(True)
+        raw.setPlainText(json.dumps(dict(file=dict(title=track['title'], artist=track['artist'], album=track['album'], version=track['version'], duration=track['duration']),
+                                        service=service, result=result), ensure_ascii=False, indent=2))
+        tabs.addTab(raw, '기술 상세 (JSON)')
+        layout.addWidget(tabs, 1)
         choices = QComboBox()
         for candidate in (result or {}).get('candidates', []):
-            choices.addItem(candidate['title'] + ' · ' + candidate['artist'] + ' · ' + candidate['recording_id'], candidate['recording_id'])
+            choices.addItem(candidate['title'] + ' · ' + candidate['artist'] + ' · ' + (' / '.join(candidate.get('albums', [])) or '앨범 정보 없음'), candidate['recording_id'])
         layout.addWidget(choices)
         reason = QLineEdit()
         reason.setMaxLength(600)
-        reason.setPlaceholderText('녹음·연주자·버전을 확인한 선택 근거')
+        reason.setPlaceholderText('이 곡이 맞다고 판단한 이유 (가수·앨범·곡 버전 등)')
         layout.addWidget(reason)
-        confirmed = QCheckBox('이 파일과 같은 녹음임을 확인했습니다')
+        confirmed = QCheckBox('선택한 정보가 이 파일과 같은 곡임을 확인했습니다')
         layout.addWidget(confirmed)
-        status = QLabel('명시적 선택만 참고 근거로 저장합니다. 음악 태그와 분류는 바꾸지 않습니다.')
+        status = QLabel('선택한 곡 정보를 AI 분류의 참고 자료로 저장합니다. 음악 파일과 현재 분류는 바꾸지 않습니다.')
         status.setWordWrap(True)
         layout.addWidget(status)
         buttons = QHBoxLayout()
-        select = QPushButton('선택한 녹음 연결 저장')
+        select = QPushButton('선택한 곡 정보 저장')
         select.setProperty('primary', True)
         select.setEnabled(service == 'musicbrainz' and choices.count() > 0)
         def save():
             if not confirmed.isChecked():
-                status.setText('같은 녹음임을 확인한 뒤 체크하세요.')
+                status.setText('같은 곡인지 확인한 뒤 체크하세요.')
                 return
             try:
                 ExternalLookup(self.library, self.settings).choose_candidate(track['id'], choices.currentData(), result, track['revision'], reason.text())
@@ -197,7 +216,7 @@ class ExternalDialog(QDialog):
 
     def result(self, result):
         rows, count, failed = result
-        self.status.setText(f'조회 {count:,}곡 · 오류 {failed:,} · 캐시 목록을 페이지별로 검토할 수 있습니다.')
+        self.status.setText(f'조회 {count:,}곡 · 오류 {failed:,} · 찾은 정보를 곡별로 확인할 수 있습니다.')
 
     def worker_finished(self):
         worker, self.worker = self.worker, None

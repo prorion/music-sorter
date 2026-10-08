@@ -1,6 +1,6 @@
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QPalette, QWheelEvent
 from PySide6.QtCore import QObject, QEvent
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QDialog, QDialogButtonBox, QLineEdit
 from pathlib import Path
 
 
@@ -25,7 +25,32 @@ class DialogButtonStyler(QObject):
         return False
 
 
+class ComboWheelGuard(QObject):
+    """Closed dropdowns must never consume scrolling as a value change."""
+    def eventFilter(self, widget, event):
+        if event.type() == QEvent.Type.Wheel:
+            combo = widget if isinstance(widget, QComboBox) else widget.parentWidget() if isinstance(widget, QLineEdit) else None
+            if isinstance(combo, QComboBox) and not combo.view().isVisible():
+                parent = combo.parentWidget()
+                while parent:
+                    if isinstance(parent, QAbstractScrollArea):
+                        forwarded = QWheelEvent(parent.viewport().mapFromGlobal(event.globalPosition().toPoint()),
+                                                event.globalPosition(), event.pixelDelta(), event.angleDelta(),
+                                                event.buttons(), event.modifiers(), event.phase(), event.inverted())
+                        forwarded.ignore()
+                        QApplication.sendEvent(parent.viewport(), forwarded)
+                        if forwarded.isAccepted():
+                            break
+                    parent = parent.parentWidget()
+                event.ignore()
+                return True
+        return False
+
+
 def apply_theme(app, theme: str, font_scale: float):
+    if not hasattr(app, '_combo_wheel_guard'):
+        app._combo_wheel_guard = ComboWheelGuard(app)
+        app.installEventFilter(app._combo_wheel_guard)
     if not hasattr(app, '_dialog_button_styler'):
         app._dialog_button_styler = DialogButtonStyler(app)
         app.installEventFilter(app._dialog_button_styler)

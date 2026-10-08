@@ -13,10 +13,10 @@ class LinkDialog(QDialog):
         self.worker = None
         self.offset = 0
         self.close_requested = False
-        self.setWindowTitle("연결 보류 검토 · 파일 변경 없음")
+        self.setWindowTitle("이동된 파일과 이전 곡 기록 비교")
         self.resize(1050, 740)
         layout = QVBoxLayout(self)
-        title = QLabel(f"새 경로: {self.track['path']}\n현재 SHA-256: {self.track['hash']}\n기존 기록을 선택하거나 별도 신규 파일로 확정하세요.")
+        title = QLabel(f"새 경로: {self.track['path']}\n파일 내용 확인 번호: {self.track['hash']}\n기존 기록을 선택하거나 별도 신규 파일로 확정하세요.")
         title.setWordWrap(True)
         layout.addWidget(title)
         self.table = QTableWidget(0, 3)
@@ -47,11 +47,11 @@ class LinkDialog(QDialog):
         self.mode = QComboBox()
         self.mode.addItem("처리 선택", None)
         self.mode.addItem("선택한 기존 기록에 연결", "link")
-        self.mode.addItem("기존 기록을 승계하지 않고 신규 파일로 확정", "new")
+        self.mode.addItem("이전 기록과 별개의 새 곡으로 등록", "new")
         self.inherit = QComboBox()
         self.inherit.addItem("분류 처리 선택", None)
-        self.inherit.addItem("기존 분류·수동 보호 유지", True)
-        self.inherit.addItem("분류 초기화 · 이전 값은 이력 보존", False)
+        self.inherit.addItem("이전 분류와 직접 수정한 내용 유지", True)
+        self.inherit.addItem("분류를 처음부터 다시 시작 (이전 기록 보존)", False)
         self.mode.currentIndexChanged.connect(lambda: self.inherit.setEnabled(self.mode.currentData() == "link"))
         self.inherit.setEnabled(False)
         actions.addWidget(self.mode)
@@ -61,7 +61,7 @@ class LinkDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
-        self.save_button = QPushButton("선택한 연결을 DB에 저장")
+        self.save_button = QPushButton("선택한 곡 기록 연결")
         self.save_button.setProperty("primary", True)
         self.save_button.clicked.connect(self.save)
         self.close_button = QPushButton("보류 / 닫기")
@@ -85,7 +85,7 @@ class LinkDialog(QDialog):
                 self.table.setItem(index, column, item)
         self.table.setCurrentCell(-1, -1)
         self.table.blockSignals(False)
-        self.count.setText(f"동일 해시 후보 {total:,}개 · {self.offset + 1 if self.candidates else 0}–{self.offset + len(self.candidates)} 표시")
+        self.count.setText(f"파일 내용이 같은 이전 기록 {total:,}개 · {self.offset + 1 if self.candidates else 0}–{self.offset + len(self.candidates)} 표시")
         self.previous.setEnabled(self.offset > 0)
         self.next.setEnabled(self.offset + len(self.candidates) < total)
         self.mode.model().item(1).setEnabled(total > 0)
@@ -97,16 +97,16 @@ class LinkDialog(QDialog):
 
     def selection_changed(self, row, *_):
         if not 0 <= row < len(getattr(self, "candidates", [])):
-            self.comparison.setPlainText("승계할 후보를 명시적으로 선택하세요. 기본 선택은 없습니다." if self.total else
-                                        "현재 승계 가능한 기존 기록이 없습니다. 신규 파일로 확정하거나 재스캔으로 기존 후보를 확인하세요.")
+            self.comparison.setPlainText("이 파일과 연결할 이전 곡 기록을 선택하세요." if self.total else
+                                        "내용이 같은 이전 기록이 없습니다. 새 곡으로 등록하거나 폴더를 다시 스캔하세요.")
             return
         candidate = self.candidates[row]
         classification = []
         for axis, field in candidate["classification"].items():
             value = field["value"]
-            label = "미확정" if value is None else "해당 없음" if value == [] else " · ".join(value) if isinstance(value, list) else value
-            classification.append(f"{LABELS[axis]}: {label}" + (" · 수동 보호" if field["protected"] else ""))
-        self.comparison.setPlainText(f"기존 SHA-256: {candidate['hash']}\n기존 분류:\n" + "\n".join(classification))
+            label = "확인 필요" if value is None else "해당 없음" if value == [] else " · ".join(value) if isinstance(value, list) else value
+            classification.append(f"{LABELS[axis]}: {label}" + (" · 직접 수정한 분류" if field["protected"] else ""))
+        self.comparison.setPlainText(f"이전 파일 내용 확인 번호: {candidate['hash']}\n기존 분류:\n" + "\n".join(classification))
 
     def save(self):
         if self.worker and self.worker.isRunning():
@@ -151,6 +151,6 @@ class LinkDialog(QDialog):
         if self.worker and self.worker.isRunning():
             self.close_requested = True
             self.worker.cancel.set()
-            self.status.setText("확인 중단을 기다립니다. 완료된 DB 연결은 유지합니다.")
+            self.status.setText("확인 작업을 멈추는 중입니다. 이미 저장한 곡 기록은 유지합니다.")
             return
         super().reject()

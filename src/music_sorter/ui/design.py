@@ -89,7 +89,7 @@ class StatCard(QFrame):
 
 class TrackDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
-        if index.column() not in {4, 5}:
+        if index.column() not in {5, 6}:
             return super().paint(painter, option, index)
         styled = QStyleOptionViewItem(option)
         self.initStyleOption(styled, index)

@@ -24,21 +24,24 @@ from .theme import apply_theme
 from .design import StatCard, TrackDelegate, icon
 from .operations import FileDialog
 from .playlists import PlaylistPage
+from .wording import readable
 
 STATE_LABELS = {"ready": "확인됨", "external_change": "외부 변경", "missing": "누락", "unavailable": "확인 불가",
-                "link_pending": "연결 보류", "replaced": "교체된 기록", "unclassified": "미분류", "unresolved": "미확정",
+                "link_pending": "연결 보류", "replaced": "교체된 기록", "unclassified": "미분류", "unresolved": "확인 필요",
                 "confirmed": "확정", "running": "진행 중", "completed": "완료", "cancelled": "취소",
                 "partial": "부분 완료", "failed": "실패", "interrupted": "이전 실행 중단",
-                "preparing": "미리보기 중", "prepared": "저장 확인 대기"}
+                "preparing": "미리보기 중", "prepared": "변경 내용 확인 대기", "paused": "대기 중",
+                "remote": "서버 처리 중", "unknown": "처리 여부 확인 필요"}
 
 
 class TrackModel(QAbstractTableModel):
-    headers = ["제목", "아티스트", "대분류", "세부 장르", "분류 상태", "파일 상태"]
+    headers = ["No.", "제목", "아티스트", "대분류", "세부 장르", "분류 상태", "파일 상태"]
     order_requested = Signal(str, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.rows = []
+        self.offset = 0
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
@@ -50,11 +53,13 @@ class TrackModel(QAbstractTableModel):
         if not index.isValid():
             return None
         track = self.rows[index.row()]
+        if role == Qt.ItemDataRole.TextAlignmentRole and index.column() == 0:
+            return Qt.AlignmentFlag.AlignCenter
         if role == Qt.ItemDataRole.ToolTipRole:
             return track["path"]
         if role == Qt.ItemDataRole.DisplayRole:
             classification = track["classification"]
-            values = [track["title"], track["artist"], classification["major"]["value"] or "—",
+            values = [self.offset + index.row() + 1, track["title"], track["artist"], classification["major"]["value"] or "—",
                       " · ".join(classification["subgenre"]["value"] or []),
                       STATE_LABELS[track["review_state"]], STATE_LABELS.get(track["file_state"], track["file_state"])]
             return values[index.column()]
@@ -65,13 +70,14 @@ class TrackModel(QAbstractTableModel):
             return self.headers[section]
         return super().headerData(section, orientation, role)
 
-    def replace(self, rows):
+    def replace(self, rows, offset=0):
         self.beginResetModel()
         self.rows = rows
+        self.offset = offset
         self.endResetModel()
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
-        mapping = {0: "title_key", 1: "artist_key", 2: "major", 3: "subgenre", 4: "review_state", 5: "file_state"}
+        mapping = {1: "title_key", 2: "artist_key", 3: "major", 4: "subgenre", 5: "review_state", 6: "file_state"}
         if column in mapping:
             self.order_requested.emit(mapping[column], order == Qt.SortOrder.DescendingOrder)
 
@@ -152,12 +158,12 @@ class MainWindow(QMainWindow):
         sidebar_layout.addSpacing(12)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        for title, glyph in (("음악 라이브러리", "library"), ("분류 검토", "review"), ("중복 검토", "duplicates"),
-                             ("재생목록", "playlist"), ("작업 이력", "history")):
+        for title, glyph in (("음악 라이브러리", "library"), ("분류 확인", "review"), ("중복 곡 확인", "duplicates"),
+                             ("재생목록", "playlist"), ("작업 기록", "history")):
             self.navigation.addItem(QListWidgetItem(icon(glyph), title))
         self.navigation.setIconSize(QSize(20, 20))
         sidebar_layout.addWidget(self.navigation, 1)
-        badge = QLabel("로컬 라이브러리")
+        badge = QLabel("내 PC의 음악")
         badge.setObjectName("badge")
         sidebar_layout.addWidget(badge)
         version = QLabel(f"Windows · v{__version__}")
@@ -178,7 +184,7 @@ class MainWindow(QMainWindow):
         for key, label, hint, tint in (("total", "전체 음악", "라이브러리에 등록된 곡", "mint"),
                                        ("confirmed", "분류 완료", "모든 항목을 확인한 곡", "mint"),
                                        ("unclassified", "분류 대기", "아직 분류하지 않은 곡", "neutral"),
-                                       ("unresolved", "검토 필요", "미확정 항목이 남은 곡", "neutral")):
+                                       ("unresolved", "검토 필요", "직접 확인이 필요한 곡", "neutral")):
             card = StatCard(label, hint, tint)
             self.stat_cards[key] = card
             cards.addWidget(card, 1)
@@ -217,15 +223,15 @@ class MainWindow(QMainWindow):
         self.scan_button.setProperty("primary", True)
         self.scan_button.clicked.connect(self.start_scan)
         actions.addWidget(self.scan_button)
-        self.bulk_button = QPushButton("일괄 분류 수정")
+        self.bulk_button = QPushButton("여러 곡 분류 수정")
         self.bulk_button.setToolTip("Ctrl/Shift로 선택한 곡 · 검색 결과 전체 · 라이브러리 전체")
         self.bulk_button.clicked.connect(self.open_bulk)
         actions.addWidget(self.bulk_button)
-        self.external_button = QPushButton('음악 정보 보완')
+        self.external_button = QPushButton('곡 정보 찾기')
         self.external_button.clicked.connect(self.open_external)
         actions.addWidget(self.external_button)
-        self.classify_button = QPushButton('분류 실행')
-        self.classify_button.setToolTip('입력·예산 계획 확인 후 OpenAI/Claude 분류 · Batch 결과 수집')
+        self.classify_button = QPushButton('AI로 분류')
+        self.classify_button.setToolTip('보낼 곡 정보와 비용을 확인한 뒤 AI로 분류합니다. 이용 요금이 발생합니다.')
         self.classify_button.clicked.connect(self.open_classify)
         actions.addWidget(self.classify_button)
         self.file_button = QPushButton('파일 정리 미리보기')
@@ -253,9 +259,12 @@ class MainWindow(QMainWindow):
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 62)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for column, width in ((2, 83), (3, 110), (4, 90), (5, 90)):
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSortIndicator(1, Qt.SortOrder.AscendingOrder)
+        for column, width in ((3, 83), (4, 110), (5, 90), (6, 90)):
             self.table.setColumnWidth(column, width)
         self.model.order_requested.connect(self.order_changed)
         self.table.selectionModel().currentRowChanged.connect(self.selection_changed)
@@ -306,7 +315,7 @@ class MainWindow(QMainWindow):
         self.jobs_table.cellDoubleClicked.connect(self.open_job)
         layout.addWidget(self.player)
         footer = QHBoxLayout()
-        self.status = QLabel("로컬 관리 · API 비용 없음 · 파일 변경 없음")
+        self.status = QLabel("음악 폴더를 스캔한 뒤 곡을 선택하세요. AI 분류와 파일 정리는 각각의 버튼에서 시작합니다.")
         self.status.setObjectName("subtle")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, 1)
@@ -356,7 +365,7 @@ class MainWindow(QMainWindow):
     def discard_edits(self) -> bool:
         if not self.editor.dirty():
             return True
-        if QMessageBox.question(self, "미저장 수정", "미저장 분류 수정을 버리고 이동할까요?") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "저장하지 않은 수정", "저장하지 않은 분류 수정을 취소하고 이동할까요?") != QMessageBox.StandardButton.Yes:
             return False
         if self.editor.current:
             self.editor.load_track(self.library.track(self.editor.current["id"]))
@@ -369,7 +378,7 @@ class MainWindow(QMainWindow):
             self.navigation.blockSignals(False)
             return
         self.active_navigation = index
-        titles = ("음악 라이브러리", "분류 검토", "중복 검토", "재생목록", "작업 이력")
+        titles = ("음악 라이브러리", "분류 확인", "중복 곡 확인", "재생목록", "작업 기록")
         self.page_title.setText(titles[index] if 0 <= index < len(titles) else "음악 라이브러리")
         if index in {0, 1}:
             self.pages.setCurrentIndex(0)
@@ -400,7 +409,7 @@ class MainWindow(QMainWindow):
         self.applied_filters = (self.search.text(), self.major_filter.currentData(), self.state_filter.currentData(),
                                 self.mood_filter.currentData(), self.concept_filter.currentData())
         self.refreshing = True
-        self.model.replace(rows)
+        self.model.replace(rows, self.offset)
         self.refreshing = False
         self.count_label.setText(f"검색 결과 {total:,}곡 · {self.offset + 1 if rows else 0}–{self.offset + len(rows)} 표시 · 페이지 {self.offset // self.page_size + 1}")
         self.previous.setEnabled(self.offset > 0)
@@ -561,7 +570,7 @@ class MainWindow(QMainWindow):
                                  exclude=self.settings.scan_exclude_folders, resume_job=resume_job if isinstance(resume_job, str) else None)
         self.worker.progress.connect(lambda count, failed: self.status.setText(f"스캔 · {count:,}곡 읽음 · {failed:,}개 확인 실패"))
         self.worker.result.connect(self.scan_result)
-        self.worker.error.connect(lambda _: self.status.setText("스캔 실패 · 폴더 접근 상태를 확인하고 작업 이력을 보세요"))
+        self.worker.error.connect(lambda _: self.status.setText("스캔 실패 · 폴더 접근 상태를 확인하고 작업 기록을 보세요"))
         self.worker.finished.connect(self.scan_finished)
         self.worker.start()
 
@@ -578,7 +587,7 @@ class MainWindow(QMainWindow):
     def cancel_scan(self):
         if self.worker:
             self.worker.control.cancelled.set()
-            self.status.setText("취소 요청 · 이미 기록한 관찰은 보존하고 누락 판정을 보류합니다")
+            self.status.setText("취소 요청 · 읽은 곡 정보는 보존합니다. 이번 스캔에서는 사라진 파일을 판단하지 않습니다")
 
     def scan_result(self, result):
         if self.settings.notify_on_completion:
@@ -619,11 +628,11 @@ class MainWindow(QMainWindow):
         jobs = self.library.jobs()
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
-            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정", 'file_preview': '파일 정리·복구', 'playlists': '재생목록 생성', 'duplicate_delete': '중복 파일 휴지통 이동'}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
+            for column, value in enumerate(({"scan": "음악 폴더 스캔", "manual_bulk": "여러 곡 분류 수정", 'llm': 'AI 음악 분류', 'external': '인터넷 곡 정보 조회', 'file_preview': '파일 정리·복구', 'playlists': '재생목록 만들기', 'duplicate_delete': '중복 파일 휴지통 이동'}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
                                            job["processed"], job["failed"], job["started_at"])):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, job['id'])
-                item.setToolTip(job["detail"])
+                item.setToolTip(readable(job["detail"]))
                 self.jobs_table.setItem(index, column, item)
 
     def review_external(self, track_id):
@@ -643,9 +652,9 @@ class MainWindow(QMainWindow):
         if not observed:
             return
         box = QMessageBox(self)
-        box.setWindowTitle("외부 변경 검토")
+        box.setWindowTitle("앱 밖에서 바뀐 파일 확인")
         box.setText(f"이전: {track['artist']} — {track['title']}\n현재: {observed['artist']} — {observed['title']}\n같은 파일의 수정으로 연결할지 새 파일로 등록할지 선택하세요.")
-        inherit = box.addButton("변경으로 연결 · 수동 값 승계", QMessageBox.ButtonRole.AcceptRole)
+        inherit = box.addButton("같은 곡으로 유지 · 직접 수정한 분류 유지", QMessageBox.ButtonRole.AcceptRole)
         fresh = box.addButton("새 파일로 등록 · 이전 이력 보존", QMessageBox.ButtonRole.ActionRole)
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         box.exec()

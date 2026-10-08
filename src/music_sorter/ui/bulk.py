@@ -13,7 +13,7 @@ STATES = dict(eligible="저장 가능", blocked="보류", unchanged="변경 없�
 
 
 def describe(classification, axes=None):
-    return " / ".join(f"{LABELS[axis]}: " + ("미확정" if field["value"] is None else "해당 없음" if field["value"] == []
+    return " / ".join(f"{LABELS[axis]}: " + ("확인 필요" if field["value"] is None else "해당 없음" if field["value"] == []
                          else "·".join(field["value"]) if isinstance(field["value"], list) else field["value"])
                       for axis, field in classification.items() if axes is None or axis in axes) or "값 변경 없음"
 
@@ -61,10 +61,10 @@ class BulkDialog(QDialog):
         self.preview = None
         self.offset = 0
         self.close_requested = False
-        self.setWindowTitle("일괄 분류 수정 · 미리보기 후 DB 저장")
+        self.setWindowTitle("여러 곡 분류 수정")
         self.resize(1140, 780)
         layout = QVBoxLayout(self)
-        note = QLabel("수정한 항목 전체를 수동 보호합니다. 음악 파일은 변경하지 않습니다.\n검색 결과 전체는 현재 페이지 밖의 곡도 포함합니다. 충돌·파일 상태 문제는 미리보기에서 보류합니다.")
+        note = QLabel("직접 수정한 분류는 AI가 덮어쓰지 않도록 보호합니다. 음악 파일은 변경하지 않습니다.\n검색 결과 전체는 현재 페이지 밖의 곡도 포함합니다. 바로 바꿀 수 없는 곡은 미리보기에서 이유를 표시합니다.")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.tabs = QTabWidget()
@@ -88,11 +88,11 @@ class BulkDialog(QDialog):
             enabled = QCheckBox(LABELS[axis] + " 수정")
             mode = QComboBox()
             single = axis in {"major", "vocal"}
-            for title, data in (("값 지정", "set"), ("미확정", "unknown")) if single else (
-                    ("목록 교체", "replace"), ("태그 추가", "add"), ("태그 제거", "remove"), ("미확정", "unknown")):
+            for title, data in (("분류 선택", "set"), ("확인 필요", "unknown")) if single else (
+                    ("선택한 분류로 바꾸기", "replace"), ("분류 추가", "add"), ("분류 제거", "remove"), ("확인 필요", "unknown")):
                 mode.addItem(title, data)
             if axis == "concept":
-                mode.addItem("검토했으나 해당 태그 없음", "none")
+                mode.addItem("해당되는 분류 없음", "none")
             if single:
                 value = QComboBox()
                 value.addItem("값 선택", None)
@@ -143,13 +143,13 @@ class BulkDialog(QDialog):
         pages.addWidget(self.next)
         preview_layout.addLayout(pages)
         self.tabs.addTab(preview_page, "대상·변경 미리보기")
-        self.status = QLabel("항목·방식·값을 선택하고 미리보기를 만드세요.")
+        self.status = QLabel("바꿀 항목과 분류를 선택한 뒤 「미리보기 만들기」를 누르세요.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
         self.preview_button = QPushButton("미리보기 만들기")
         self.preview_button.clicked.connect(self.start_preview)
-        self.apply_button = QPushButton("확인한 변경을 DB에 저장")
+        self.apply_button = QPushButton("선택한 분류 저장")
         self.apply_button.setProperty("primary", True)
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.start_apply)
@@ -208,7 +208,7 @@ class BulkDialog(QDialog):
         if not self.preview:
             return
         count = self.preview["eligible"]
-        if QMessageBox.question(self, "일괄 DB 저장", f"미리보기에서 저장 가능한 {count:,}곡의 선택 항목을 수정하고 수동 보호할까요?\n보류 {self.preview['blocked']:,}곡은 건너뜁니다. 음악 파일은 변경하지 않습니다.") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "여러 곡 분류 저장", f"{count:,}곡의 선택한 분류를 바꾸고 AI가 덮어쓰지 않도록 보호할까요?\n바로 수정할 수 없는 {self.preview['blocked']:,}곡은 건너뜁니다. 음악 파일은 변경하지 않습니다.") != QMessageBox.StandardButton.Yes:
             return
         job_id = self.preview["job_id"]
         self.begin(lambda cancel, progress: self.library.apply_bulk(job_id, cancel, progress), "apply")
@@ -223,7 +223,7 @@ class BulkDialog(QDialog):
         self.stop_button.setEnabled(True)
         self.previous.setEnabled(False)
         self.next.setEnabled(False)
-        self.status.setText("대상을 확인하고 있습니다…" if mode == "preview" else "DB 판정을 저장하고 있습니다…")
+        self.status.setText("바뀔 분류를 확인하고 있습니다…" if mode == "preview" else "분류를 저장하고 있습니다…")
         self.worker = ReviewWorker(action, self)
         self.worker.progress.connect(lambda count, total: self.status.setText(f"처리 중 · {count:,} / {total:,}곡"))
         self.worker.result.connect(self.completed)
@@ -234,14 +234,14 @@ class BulkDialog(QDialog):
     def completed(self, result):
         if self.work_mode == "preview":
             if result.get("cancelled"):
-                self.status.setText("미리보기를 취소했습니다. DB 분류는 변경하지 않았습니다.")
+                self.status.setText("미리보기를 취소했습니다. 저장된 분류는 바뀌지 않았습니다.")
                 return
             self.preview = result
             self.offset = 0
             self.tabs.setCurrentIndex(1)
             self.status.setText(f"대상 {result['total']:,}곡 · 저장 가능 {result['eligible']:,} · 보류 {result['blocked']:,} · 변경 없음 {result['unchanged']:,}")
         else:
-            self.status.setText(f"DB 저장 {result['applied']:,}곡 · 미리보기 뒤 변경되어 제외 {result['stale']:,} · 취소 {result['cancelled']:,}")
+            self.status.setText(f"분류 저장 {result['applied']:,}곡 · 미리보기 뒤 변경되어 제외 {result['stale']:,} · 취소 {result['cancelled']:,}")
             self.applied = True
         self.load_page()
 

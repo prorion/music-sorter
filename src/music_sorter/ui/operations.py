@@ -40,17 +40,17 @@ class FileDialog(QDialog):
         title = QLabel('파일 정리')
         title.setObjectName('pageTitle')
         layout.addWidget(title)
-        note = QLabel('실제 적용은 아래 버튼을 눌렀을 때 시작합니다. 음악 파일을 삭제하지 않습니다.\n변경한 경로·ID3는 작업 이력에서 되돌릴 수 있습니다. 미확정 곡의 기존 장르는 유지합니다.')
+        note = QLabel('실제 적용은 아래 버튼을 눌렀을 때 시작합니다. 음악 파일을 삭제하지 않습니다.\n파일 위치·이름·장르 변경은 작업 기록에서 되돌릴 수 있습니다. 분류를 확인하지 못한 곡의 기존 장르는 유지합니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
         self.form = QHBoxLayout()
         self.scope = QComboBox()
         self.scope.addItem(f'선택한 {len(selected)}곡', 'selected')
-        self.scope.addItem('검색·필터 결과 전체', 'filtered')
-        self.scope.addItem('라이브러리 전체', 'all')
+        self.scope.addItem('검색 결과 전체', 'filtered')
+        self.scope.addItem('등록된 모든 곡', 'all')
         self.form.addWidget(self.scope)
         self.checks = {}
-        for key, text in (('organize', '폴더 정리'), ('rename', '이름 변경'), ('write_genre', 'ID3 장르 기록'), ('archive_duplicates', '중복 후보 폴더 보관')):
+        for key, text in (('organize', '폴더 정리'), ('rename', '이름 변경'), ('write_genre', '파일에 장르 저장'), ('archive_duplicates', '중복 파일을 별도 폴더로 모으기')):
             check = QCheckBox(text)
             self.form.addWidget(check)
             self.checks[key] = check
@@ -75,17 +75,17 @@ class FileDialog(QDialog):
         pages.addWidget(self.page_label, 1)
         pages.addWidget(self.next)
         layout.addLayout(pages)
-        self.status = QLabel('실행할 항목을 선택하고 미리보기를 만드세요.')
+        self.status = QLabel('정리할 항목을 선택한 뒤 「미리보기 만들기」를 누르세요. 아직 파일은 바꾸지 않습니다.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
         self.preview_button = QPushButton('미리보기 만들기')
         self.preview_button.clicked.connect(self.preview)
-        self.apply_button = QPushButton('확인한 파일 변경 실제 적용')
+        self.apply_button = QPushButton('미리보기대로 파일 변경')
         self.apply_button.setProperty('primary', True)
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.apply)
-        self.resume_button = QPushButton('중단 작업 확인·재개')
+        self.resume_button = QPushButton('멈춘 파일 정리 이어하기')
         self.resume_button.clicked.connect(lambda: self.start(lambda *_: self.engine.resume(self.job_id), self.applied))
         self.undo_button = QPushButton('이 작업 되돌리기')
         self.undo_button.clicked.connect(self.undo)
@@ -199,7 +199,7 @@ class FileDialog(QDialog):
     def undo(self):
         rows = [row for row in self.engine.operations(self.job_id) if row['state'] == 'recorded']
         affected = sum(len(self.engine.undo_preview(row['id'])) for row in rows)
-        if QMessageBox.question(self, '파일 변경 되돌리기', f'이 작업과 의존하는 후속 파일 변경을 역순으로 복구합니다.\n복구 계획 최대 {affected}개. 외부 수정·경로 충돌은 보류합니다. 진행할까요?', defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, '파일 변경 되돌리기', f'이 작업 이후 같은 파일에 적용한 변경도 함께 되돌립니다.\n복구 계획 최대 {affected}개. 앱 밖에서 바뀌었거나 같은 이름의 파일이 있으면 건너뜁니다. 진행할까요?', defaultButton=QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         def action(control, progress):
             done = 0

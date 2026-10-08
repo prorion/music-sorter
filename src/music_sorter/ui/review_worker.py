@@ -21,4 +21,4 @@ class ReviewWorker(QThread):
         except ValueError as error:
             self.error.emit(str(error))
         except Exception as error:
-            self.error.emit(f"작업을 마치지 못했습니다 ({type(error).__name__}). DB·경로·공간을 확인하세요.")
+            self.error.emit("작업을 마치지 못했습니다. 저장된 기록·폴더 접근 권한·저장 공간을 확인하세요.")
