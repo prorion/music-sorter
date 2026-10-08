@@ -24,6 +24,12 @@ Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사
 
 ## 개발 환경과 실행
 
+빌드된 앱은 프로젝트 루트의 **`music-sorter.lnk` 바로가기**를 더블클릭해 실행합니다. 성공한 빌드마다 같은 바로가기가 새 실행파일을 가리키도록 갱신됩니다. 실행파일과 DLL·리소스는 빌드 폴더에 함께 보관합니다. 프로젝트를 이동했거나 기존 빌드에 다시 연결하려면 아래 명령으로 바로가기만 생성합니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_windows.py --output-dir dist/0.7.4 --shortcut-only
+```
+
 Windows에서 Python 3.13으로 프로젝트 전용 가상환경을 만듭니다.
 
 ```powershell

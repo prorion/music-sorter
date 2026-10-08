@@ -2,15 +2,50 @@
 import argparse
 import configparser
 import json
+import os
 import shutil
 import subprocess
 import sys
+import uuid
 from importlib.metadata import distribution
 from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from music_sorter import __version__
+
+
+def write_shortcut(root, bundle):
+    """Publish one fixed Windows entry point without separating its runtime files."""
+    executable = (bundle / 'main.exe').resolve(strict=True)
+    if not executable.is_file():
+        raise ValueError('바로가기 대상 실행파일을 확인하세요.')
+    build = root / 'build'
+    build.mkdir(exist_ok=True)
+    temporary = build / f'shortcut-{uuid.uuid4().hex}.lnk'
+    environment = dict(os.environ, MUSIC_SORTER_SHORTCUT_PATH=str(temporary),
+                       MUSIC_SORTER_SHORTCUT_TARGET=str(executable), MUSIC_SORTER_SHORTCUT_ROOT=str(root))
+    powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    command = """
+$ErrorActionPreference = 'Stop'
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($env:MUSIC_SORTER_SHORTCUT_PATH)
+$shortcut.TargetPath = $env:MUSIC_SORTER_SHORTCUT_TARGET
+$shortcut.WorkingDirectory = $env:MUSIC_SORTER_SHORTCUT_ROOT
+$shortcut.Description = 'music-sorter'
+$shortcut.IconLocation = $env:MUSIC_SORTER_SHORTCUT_TARGET + ',0'
+$shortcut.Save()
+$saved = $shell.CreateShortcut($env:MUSIC_SORTER_SHORTCUT_PATH)
+if ($saved.TargetPath -ne $env:MUSIC_SORTER_SHORTCUT_TARGET -or $saved.WorkingDirectory -ne $env:MUSIC_SORTER_SHORTCUT_ROOT) {
+    throw 'Shortcut verification failed'
+}
+"""
+    try:
+        subprocess.run([str(powershell), '-NoProfile', '-NonInteractive', '-Command', command],
+                       env=environment, check=True)
+        temporary.replace(root / 'music-sorter.lnk')
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_notices(bundle, version):
@@ -64,12 +99,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output-dir", type=Path, help="실행 중인 이전 빌드를 보존할 별도 출력 폴더")
+    parser.add_argument('--shortcut-only', action='store_true', help='기존 빌드를 가리키는 프로젝트 루트 바로가기만 생성')
     parser.add_argument('--notices-only', action='store_true', help='기존 빌드의 실제 설치 의존성·라이선스 목록만 작성')
     parser.add_argument('--bundle-version', help='기존 빌드 고지에 기록할 버전')
     args = parser.parse_args()
+    if args.shortcut_only and (args.dry_run or args.notices_only):
+        parser.error('--shortcut-only는 --dry-run 또는 --notices-only와 함께 사용할 수 없습니다.')
     root = Path(__file__).resolve().parents[1]
     output = args.output_dir.resolve() if args.output_dir else root / "dist"
     output.mkdir(parents=True, exist_ok=True)
+    if args.shortcut_only:
+        write_shortcut(root, output / 'music-sorter.dist')
+        return 0
     if args.notices_only:
         write_notices(output / 'music-sorter.dist', args.bundle_version or __version__)
         return 0
@@ -101,6 +142,7 @@ def main():
         return result
     bundle = output / "music-sorter.dist"
     write_notices(bundle, __version__)
+    write_shortcut(root, bundle)
     return 0
 
 

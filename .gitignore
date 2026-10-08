@@ -39,6 +39,7 @@ build/
 dist/
 deployment/
 pysidedeploy.spec
+/music-sorter.lnk
 settings.json
 rollback/
 backups/
