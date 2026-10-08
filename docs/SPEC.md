@@ -794,7 +794,7 @@ music-sorter                         음악 루트 / 전체·미분류·검토 �
 
 ## 17. 구현·검증 현황
 
-2026-10-08 현재 **소스 0.7.5 / 검증된 배포 0.7.4**, 전체 자동 검증과 실제 파일 사본·곰오디오 호환·현재 PC의 독립 실행/ZIP 확인을 마쳤다. 로컬 관리·파일 적용/복구·재생목록·분류 연결·데이터/태그/검토 관리와 UI를 구현했다. Claude 실제 동기/Batch 생성·취소와 사용량 기반 비용 정산도 확인했다. 아래 초기 버전 기록은 당시 결과이며 최신 현황은 §17.12를 따른다. 분류 정답률과 별도 장치 검증이 남아 §16의 전체 완료로 표시하지 않는다.
+2026-10-08 현재 **소스·검증된 배포 0.7.5**, 전체 자동 검증과 실제 파일 사본·곰오디오 호환·현재 PC의 독립 실행/ZIP 확인을 마쳤다. 로컬 관리·파일 적용/복구·재생목록·분류 연결·데이터/태그/검토 관리와 UI를 구현했다. Claude 실제 동기/Batch 생성·취소와 사용량 기반 비용 정산도 확인했다. 아래 초기 버전 기록은 당시 결과이며 최신 현황은 §17.12를 따른다. 분류 정답률과 별도 장치 검증이 남아 §16의 전체 완료로 표시하지 않는다.
 
 ### 17.1 구현한 기능
 
@@ -937,4 +937,5 @@ music-sorter                         음악 루트 / 전체·미분류·검토 �
 - 근거 지침: [Microsoft 대화상자](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/dialogs-and-flyouts/dialogs), [Windows 데스크톱 대화상자의 OK/Cancel/Apply 의미](https://learn.microsoft.com/en-us/windows/win32/uxguide/win-dialog-box), [Qt 폼 레이아웃](https://doc.qt.io/qt-6.11/qformlayout.html), [Qt 숫자 입력 스타일](https://doc.qt.io/qt-6.11/stylesheet-examples.html#customizing-qspinbox).
 - 전체 자동 테스트 207개 통과(87.10초), 마지막 버튼 국문화/비활성 화살표 조정 뒤 GUI 12개 통과(4.64초). 실제 숫자 버튼 클릭·적용 후 값 저장/창 유지·미변경 적용 비활성·경로 복사/폴더 열기 대상·안전한 기본 버튼 보존을 확인한다. 근거: `artifacts/tests-075/junit.xml`.
 - 설정 7개 페이지의 밝게/어둡게·850×640/780×600·실제 Qt DPR 1/1.25/1.5/2 렌더를 확인했다. 모델/숫자 입력 폭은 일반 378·작은 창 308 논리 픽셀이다. 근거: `artifacts/ui-075-100/final`~`artifacts/ui-075-200/final`의 PNG와 `render.json`. 최초 렌더의 배율은 Windows 125%와 곱해진 1.25/1.5625/1.875/2.5였으며 final에서는 목표 배율을 확인해 수정했다.
-- 새 `dist/0.7.5/music-sorter.dist` 빌드와 실행파일 UI 검증을 진행한다. 성공한 빌드는 루트 바로가기에 연결한다. 기존 음악·사용자 DB·0.7.4 실행 중인 앱은 변경하지 않는다.
+- `dist/0.7.5/music-sorter.dist` 컴파일과 의존성 고지 수집을 완료했다. 화살표 SVG 6개를 포함한 119파일 배포를 한글 경로로 복사하고 Python 관련 환경·검색 경로를 제거한 현재 PC에서 실행했다. 종료 코드 0, 내장 MP3 재생 위치 증가, 두 SDK의 동기/Batch 로컬 전송 각 7개를 확인했다. 네트워크·유료 요청 0이며 별도 Python 미설치 Windows 검증은 아니다. 개인정보 없는 ZIP 76,891,302바이트의 내용·무결성을 확인했다. 근거: `artifacts/bundle-075/report.json`; ZIP SHA-256 `78dba0c985e8afdb065dd76df8c5d6fbc77bfe34dff3ebae76b3b28d5ef2a25a`.
+- Computer Use에서 실제 0.7.5 실행파일과 분리된 빈 DB로 모델 ID 전체 표시·숫자 화살표·20→19 감소·적용 활성화·저장 후 창 유지/적용 비활성·확인 후 닫기를 확인했다. DB 폴더 열기로 검증 경로의 SQLite 파일을 확인하고 검증 앱/탐색기를 종료했다. 근거: `artifacts/ui-075-packaged/native-verification.json`, `classification-apply-enabled.png`, `library-db-path.png`. 루트 `music-sorter.lnk` 대상이 새 실행파일임을 확인했다. 기존 음악·사용자 DB는 변경하지 않았다.
