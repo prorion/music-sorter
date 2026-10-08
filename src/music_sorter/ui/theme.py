@@ -1,8 +1,34 @@
 from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QObject, QEvent
+from PySide6.QtWidgets import QDialog, QDialogButtonBox
 from pathlib import Path
 
 
+class DialogButtonStyler(QObject):
+    """Style standard dialog actions without changing keyboard defaults or callbacks."""
+    def eventFilter(self, widget, event):
+        if event.type() == QEvent.Type.Show and isinstance(widget, QDialog):
+            for box in widget.findChildren(QDialogButtonBox):
+                for button in box.buttons():
+                    role = box.buttonRole(button)
+                    labels = {QDialogButtonBox.StandardButton.Ok: '확인', QDialogButtonBox.StandardButton.Cancel: '취소',
+                              QDialogButtonBox.StandardButton.Apply: '적용', QDialogButtonBox.StandardButton.Close: '닫기',
+                              QDialogButtonBox.StandardButton.Yes: '예', QDialogButtonBox.StandardButton.No: '아니요',
+                              QDialogButtonBox.StandardButton.Save: '저장', QDialogButtonBox.StandardButton.Discard: '저장 안 함'}
+                    if box.standardButton(button) in labels:
+                        button.setText(labels[box.standardButton(button)])
+                    button.setProperty('primary', role in {QDialogButtonBox.ButtonRole.AcceptRole, QDialogButtonBox.ButtonRole.YesRole})
+                    button.setProperty('applyAction', role == QDialogButtonBox.ButtonRole.ApplyRole)
+                    button.setProperty('danger', role == QDialogButtonBox.ButtonRole.DestructiveRole)
+                    button.style().unpolish(button)
+                    button.style().polish(button)
+        return False
+
+
 def apply_theme(app, theme: str, font_scale: float):
+    if not hasattr(app, '_dialog_button_styler'):
+        app._dialog_button_styler = DialogButtonStyler(app)
+        app.installEventFilter(app._dialog_button_styler)
     dark = theme == 'dark' or (theme == 'system' and app.styleHints().colorScheme().name == 'Dark')
     app.setProperty('musicDark', dark)
     background, panel, raised, text, muted, border, accent, soft, selected = (
@@ -22,6 +48,11 @@ def apply_theme(app, theme: str, font_scale: float):
     app.setFont(font)
     app.setStyle('Fusion')
     check_image = (Path(__file__).parents[1] / 'resources' / 'check.svg').as_posix()
+    arrow_root = Path(__file__).parents[1] / 'resources'
+    up_image = (arrow_root / f'arrow-up-{"dark" if dark else "light"}.svg').as_posix()
+    down_image = (arrow_root / f'arrow-down-{"dark" if dark else "light"}.svg').as_posix()
+    disabled_up = (arrow_root / 'arrow-up-disabled.svg').as_posix()
+    disabled_down = (arrow_root / 'arrow-down-disabled.svg').as_posix()
     app.setStyleSheet(f'''
         QWidget {{ color: {text}; }}
         QMainWindow, QDialog, QWidget#workspace {{ background: {background}; }}
@@ -38,7 +69,18 @@ def apply_theme(app, theme: str, font_scale: float):
         QLabel#badge {{ color: {accent}; background: {soft}; border-radius: 7px; padding: 5px 10px; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{ background: {panel}; border: 1px solid {border}; border-radius: 8px; padding: 8px 11px; min-height: 21px; selection-background-color: {soft}; }}
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {accent}; }}
-        QComboBox::drop-down {{ width: 22px; border: none; }}
+        QLineEdit[storagePath="true"] {{ background: {raised}; }}
+        QComboBox {{ padding-right: 34px; min-width: 140px; }}
+        QComboBox::drop-down {{ subcontrol-origin: border; subcontrol-position: top right; width: 28px; border: none; }}
+        QComboBox::down-arrow {{ image: url("{down_image}"); width: 10px; height: 6px; }}
+        QSpinBox, QDoubleSpinBox {{ padding-right: 36px; min-width: 140px; min-height: 28px; }}
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-origin: border; subcontrol-position: top right; width: 28px; height: 22px; background: {raised}; border-left: 1px solid {border}; border-bottom: 1px solid {border}; border-top-right-radius: 7px; }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 28px; height: 22px; background: {raised}; border-left: 1px solid {border}; border-bottom-right-radius: 7px; }}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{ background: {selected}; }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url("{up_image}"); width: 10px; height: 6px; }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url("{down_image}"); width: 10px; height: 6px; }}
+        QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {{ image: url("{disabled_up}"); }}
+        QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off, QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {{ image: url("{disabled_down}"); }}
         QComboBox QAbstractItemView {{ background: {panel}; border: 1px solid {border}; selection-background-color: {selected}; padding: 6px; }}
         QPushButton {{ background: {panel}; border: 1px solid {border}; border-radius: 8px; padding: 8px 13px; min-height: 20px; }}
         QPushButton:hover {{ background: {raised}; border-color: {muted}; }}
@@ -46,7 +88,14 @@ def apply_theme(app, theme: str, font_scale: float):
         QPushButton:focus {{ border: 1px solid {accent}; }}
         QPushButton:disabled {{ color: {muted}; border-color: {border}; background: {raised}; }}
         QPushButton[primary="true"] {{ background: {accent}; color: {'#10251E' if dark else '#FFFFFF'}; border: 1px solid {accent}; font-weight: 600; }}
+        QPushButton[primary="true"]:hover {{ background: {'#A4EACD' if dark else '#1C6855'}; border-color: {'#A4EACD' if dark else '#1C6855'}; }}
+        QPushButton[primary="true"]:pressed {{ background: {'#68CBA6' if dark else '#155242'}; }}
+        QPushButton[applyAction="true"] {{ color: {accent}; border-color: {accent}; background: {soft}; }}
+        QPushButton[danger="true"] {{ color: {'#F1A6A6' if dark else '#B42332'}; }}
+        QDialogButtonBox QPushButton {{ min-width: 72px; }}
+        QPushButton[primary="true"]:focus {{ border: 2px solid {'#E7EEF7' if dark else '#163D32'}; padding: 7px 12px; }}
         QPushButton[primary="true"]:disabled {{ background: {raised}; color: {muted}; border: 1px solid {border}; }}
+        QPushButton[applyAction="true"]:disabled {{ background: {raised}; color: {muted}; border-color: {border}; }}
         QPushButton#ghost {{ background: transparent; border: none; }}
         QPushButton#ghost:hover {{ background: {selected}; }}
         QPushButton#playButton {{ border-radius: 24px; min-width: 48px; max-width: 48px; min-height: 48px; max-height: 48px; padding: 0; background: {accent}; border: none; }}

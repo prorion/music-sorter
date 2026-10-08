@@ -36,6 +36,7 @@ class DuplicateDialog(QDialog):
         actions = QHBoxLayout()
         for title, callback in (("선택한 파일 유지 · DB에 기록", self.keep), ("서로 다른 녹음", self.distinct), ("판단 보류 · 닫기", self.reject)):
             button = QPushButton(title)
+            button.setProperty('primary', callback == self.keep)
             button.clicked.connect(callback)
             actions.addWidget(button)
         layout.addLayout(actions)

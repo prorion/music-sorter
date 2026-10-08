@@ -41,16 +41,31 @@ def main():
                 assert window.grab().save(str(args.output / name))
                 report["screens"].append(name)
                 report['geometry'][name] = dict(width=window.width(), height=window.height(), dpr=window.devicePixelRatioF())
-        dialog = SettingsDialog(settings, args.data_dir / "settings.json", library, window)
-        dialog.menu.setCurrentRow(2)
-        dialog.show()
-        app.processEvents()
-        dialog.grab().save(str(args.output / "settings-api.png"))
-        for menu, name in [(1, 'library'), (3, 'classification'), (5, 'output'), (6, 'data')]:
-            dialog.menu.setCurrentRow(menu)
+        for theme in ('light', 'dark'):
+            apply_theme(app, theme, 1)
+            dialog = SettingsDialog(settings, args.data_dir / "settings.json", library, window)
+            dialog.show()
+            for width, height, size in ((850, 640, 'normal'), (780, 600, 'small')):
+                dialog.resize(width, height)
+                for menu, name in enumerate(('general', 'library', 'api', 'classification', 'external', 'output', 'data')):
+                    dialog.menu.setCurrentRow(menu)
+                    app.processEvents()
+                    filename = f'settings-{name}-{theme}-{size}.png'
+                    assert dialog.grab().save(str(args.output / filename))
+                    report['screens'].append(filename)
+                    if menu == 3:
+                        report['geometry'][filename] = {'model_widths': [control.width() for control in dialog.models],
+                                                       'spin_widths': [control.width() for control in dialog.advanced.values()]}
+            dialog.close()
+        from PySide6.QtWidgets import QMessageBox
+        for theme in ('light', 'dark'):
+            apply_theme(app, theme, 1)
+            question = QMessageBox(QMessageBox.Icon.Question, '설정 변경 확인', '변경한 내용을 적용할까요?', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, window)
+            question.setDefaultButton(QMessageBox.StandardButton.No)
+            question.show()
             app.processEvents()
-            dialog.grab().save(str(args.output / f'settings-{name}.png'))
-        dialog.close()
+            question.grab().save(str(args.output / f'confirmation-{theme}.png'))
+            question.close()
         duplicates = DuplicateDialog(library, settings.duplicate_tolerance_seconds, window)
         duplicates.show()
         app.processEvents()

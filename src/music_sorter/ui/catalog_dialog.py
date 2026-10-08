@@ -41,6 +41,7 @@ class CatalogDialog(QDialog):
         buttons = QHBoxLayout()
         for title, action in [('입력 태그 추가·제안 승인', 'add'), ('선택 태그 사용 중단', 'retire'), ('선택 태그 다시 사용', 'reactivate')]:
             button = QPushButton(title)
+            button.setProperty('primary', action == 'add')
             button.clicked.connect(lambda _, mode=action: self.change(mode))
             buttons.addWidget(button)
         close = QPushButton('닫기')

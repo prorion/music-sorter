@@ -2,10 +2,11 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                               QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                              QMessageBox, QPushButton, QPlainTextEdit, QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
+                              QApplication, QGroupBox, QMessageBox, QPushButton, QPlainTextEdit, QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..database import Library, now
 from ..settings import CredentialStore, Settings
@@ -76,7 +77,11 @@ class SettingsDialog(QDialog):
         self.tolerance.setSuffix(" 초")
         music.addRow("중복 길이 허용값", self.tolerance)
         music.addRow(self.note("전체 파일 SHA-256 검증 · 정션/심볼릭 링크 제외\n데이터·복구 메뉴에서 DB를 새 위치로 이관할 수 있습니다."))
-        music.addRow(self.note(f"DB: {library.path}"))
+        database = QGroupBox('사용 중인 데이터베이스')
+        database_layout = QVBoxLayout(database)
+        self.db_path = self.storage_path(database_layout, 'DB 파일', library.path, library.path.parent)
+        database_layout.addWidget(self.note('분류·작업 이력을 저장하는 SQLite DB입니다.\n기본 위치는 Windows 사용자 앱 데이터이며 프로그램 업데이트 후에도 유지됩니다.'))
+        music.addRow(database)
 
         api = self.page("LLM / API 연결")
         api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n연결 확인은 모델 목록만 조회합니다. 음악 전송·분류 요청은 하지 않습니다."))
@@ -101,6 +106,7 @@ class SettingsDialog(QDialog):
             save = QPushButton("등록 / 교체")
             save.clicked.connect(lambda _, p=provider: self.save_key(p))
             delete = QPushButton("삭제")
+            delete.setProperty('danger', True)
             delete.clicked.connect(lambda _, p=provider: self.delete_key(p))
             status = QLabel()
             status.setTextFormat(Qt.TextFormat.PlainText)
@@ -191,7 +197,11 @@ class SettingsDialog(QDialog):
         output.addRow(self.note('곰오디오는 M3U8의 한글 경로·장르·재생을 확인했습니다.\nM3U는 곰오디오에서 한글 경로가 깨질 수 있습니다. 삼성 뮤직은 장치 검증 전입니다.\n형식 변경만으로 이전 목록을 지우거나 변경하지 않습니다. 다음 목록 생성부터 적용합니다.'))
         output.addRow(self.note("라이브러리의 파일 정리 미리보기에서 폴더·이름·장르 기록을 각각 선택합니다.\n실제 적용은 미리보기 확인 뒤 실행하며 작업 이력에서 되돌릴 수 있습니다.\n재생목록 메뉴에서 기본 목록과 조건 조합 목록을 생성합니다. UTF-8·CRLF·상대 경로를 사용합니다.\n복구 자료는 자동 삭제하지 않습니다. 자동 DB 백업은 하루 첫 적용 전 생성하고 최근 7개를 보관합니다."))
         data = self.page("데이터·복구")
-        data.addRow(self.note(f"사용자 데이터: {config_path.parent}\n백업은 DB 사본이며 음악 파일을 포함하지 않습니다."))
+        storage = QGroupBox('사용자 데이터 위치')
+        storage_layout = QVBoxLayout(storage)
+        self.data_path = self.storage_path(storage_layout, '데이터 폴더', config_path.parent, config_path.parent)
+        storage_layout.addWidget(self.note('설정·DB·백업·복구 자료를 보관합니다.\n백업은 DB 사본이며 음악 파일을 포함하지 않습니다. 위치 변경은 아래 데이터 이관 기능을 사용하세요.'))
+        data.addRow(storage)
         backup = QPushButton("검증된 DB 백업 만들기")
         backup.clicked.connect(self.backup)
         data.addRow(backup)
@@ -212,14 +222,63 @@ class SettingsDialog(QDialog):
             responses = db.execute('SELECT count(*) FROM llm_cache').fetchone()[0]
         data.addRow(self.note(f'외부 조회 캐시 {cache:,}건 · 분류 결과 캐시 {responses:,}건\n작업 결과와 오류는 작업 이력에서 확인할 수 있습니다. 키·API 오류 원문은 이력에 저장하지 않습니다.'))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Ok)
+        self.buttons = buttons
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         buttons.button(QDialogButtonBox.StandardButton.Apply).setText("적용")
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        self.apply_button = buttons.button(QDialogButtonBox.StandardButton.Apply)
+        confirm = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        confirm.setProperty('primary', True)
+        confirm.setDefault(True)
+        confirm.setToolTip('설정을 저장하고 창을 닫습니다.')
+        self.apply_button.setProperty('applyAction', True)
+        self.apply_button.setToolTip('설정을 저장하고 창은 계속 열어 둡니다.')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setToolTip('아직 적용하지 않은 설정 변경을 취소합니다. 이미 적용한 설정과 등록한 키는 유지됩니다.')
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.save)
         buttons.accepted.connect(lambda: self.accept() if self.save() else None)
         layout.addWidget(buttons)
         self.menu.setCurrentRow(0)
+        for control in self.findChildren(QLineEdit):
+            if not control.isReadOnly():
+                control.textChanged.connect(self.update_apply_state)
+        for control in self.findChildren(QComboBox):
+            control.currentTextChanged.connect(self.update_apply_state)
+        for control in (*self.findChildren(QSpinBox), *self.findChildren(QDoubleSpinBox)):
+            control.valueChanged.connect(self.update_apply_state)
+        for control in self.findChildren(QCheckBox):
+            control.toggled.connect(self.update_apply_state)
+        self.exclusions.textChanged.connect(self.update_apply_state)
+        self.update_apply_state()
+
+    def update_apply_state(self, *_):
+        self.apply_button.setEnabled(self.draft() != self.settings and not self.connection_busy())
+
+    def storage_path(self, layout, title, path, folder):
+        layout.addWidget(QLabel(title))
+        edit = QLineEdit(str(path.resolve()))
+        edit.setReadOnly(True)
+        edit.setProperty('storagePath', True)
+        edit.setAccessibleName(title)
+        edit.setToolTip(edit.text())
+        edit.setCursorPosition(0)
+        layout.addWidget(edit)
+        actions = QHBoxLayout()
+        open_button = QPushButton('폴더 열기')
+        open_button.setAccessibleName(f'{title} 폴더 열기')
+        open_button.clicked.connect(lambda: self.open_storage_folder(folder))
+        copy_button = QPushButton('경로 복사')
+        copy_button.setAccessibleName(f'{title} 경로 복사')
+        copy_button.clicked.connect(lambda: QApplication.clipboard().setText(edit.text()))
+        actions.addWidget(open_button)
+        actions.addWidget(copy_button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        return edit
+
+    def open_storage_folder(self, path):
+        if not path.is_dir() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
+            QMessageBox.warning(self, '폴더 열기 실패', '데이터 폴더 접근 상태를 확인하세요.')
 
     @staticmethod
     def note(text):
@@ -232,7 +291,9 @@ class SettingsDialog(QDialog):
         layout = QFormLayout(widget)
         layout.setSpacing(14)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
         self.menu.addItem(title)
         scroll = QScrollArea()
         scroll.setObjectName("settingsScroll")
@@ -305,6 +366,7 @@ class SettingsDialog(QDialog):
         self.workspace.setEnabled(False)
         worker = ConnectionWorker(provider, self.vault, self.workspace.text().strip(), self)
         self.connection_worker = worker
+        self.update_apply_state()
         worker.finished.connect(self.connection_finished)
         worker.start()
 
@@ -332,6 +394,7 @@ class SettingsDialog(QDialog):
         for index in range(len(self.providers)):
             self.refresh_models(index)
         self.connection_worker = None
+        self.update_apply_state()
         worker.deleteLater()
 
     def save_key(self, provider):
@@ -402,6 +465,7 @@ class SettingsDialog(QDialog):
                 self.library.bind_root(Path(updated.music_root))
             updated.save(self.config_path)
             self.settings = updated
+            self.update_apply_state()
             self.settings_saved.emit(updated)
             return True
         except (ValueError, OSError) as error:
@@ -423,6 +487,7 @@ class SettingsDialog(QDialog):
             return
         from .operations import OperationWorker
         self.data_worker = OperationWorker(lambda *_: action(), self)
+        self.update_apply_state()
         self.data_worker.result.connect(callback)
         self.data_worker.error.connect(self.data_status.setText)
         self.data_worker.finished.connect(self.data_finished)
@@ -433,6 +498,7 @@ class SettingsDialog(QDialog):
 
     def data_finished(self):
         worker, self.data_worker = self.data_worker, None
+        self.update_apply_state()
         worker.deleteLater()
         for button in self.data_buttons:
             button.setEnabled(True)

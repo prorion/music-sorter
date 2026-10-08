@@ -54,6 +54,74 @@ def test_threaded_scan_refreshes_table(qtbot, library, root, song, fake_reader, 
     assert "스캔 완료" in window.status.text()
 
 
+def test_settings_fields_grow_spin_arrows_work_and_apply_tracks_saved_changes(qtbot, qapp, library, tmp_path, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QStyle, QStyleOptionSpinBox
+    from music_sorter.ui.theme import apply_theme
+    monkeypatch.setattr('music_sorter.settings.CredentialStore.get', lambda *_: None)
+    apply_theme(qapp, 'dark', 1)
+    dialog = SettingsDialog(Settings(), tmp_path / 'settings.json', library)
+    qtbot.addWidget(dialog)
+    dialog.menu.setCurrentRow(3)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert not dialog.apply_button.isEnabled()
+    assert all(control.width() >= 250 for control in dialog.models)
+    spin = dialog.advanced['llm_tracks_per_request']
+    option = QStyleOptionSpinBox()
+    spin.initStyleOption(option)
+    down = spin.style().subControlRect(QStyle.ComplexControl.CC_SpinBox, option, QStyle.SubControl.SC_SpinBoxDown, spin)
+    assert down.width() >= 20 and down.height() >= 18
+    qtbot.mouseClick(spin, Qt.MouseButton.LeftButton, pos=down.center())
+    assert spin.value() == 19 and dialog.apply_button.isEnabled()
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert dialog.isVisible() and not dialog.apply_button.isEnabled()
+    assert Settings.load(tmp_path / 'settings.json').llm_tracks_per_request == 19
+    spin.setValue(18)
+    assert dialog.apply_button.isEnabled()
+    spin.setValue(19)
+    assert not dialog.apply_button.isEnabled()
+
+
+def test_settings_actual_db_path_is_readonly_copyable_and_opens_containing_folder(qtbot, qapp, library, tmp_path, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QPushButton
+    monkeypatch.setattr('music_sorter.settings.CredentialStore.get', lambda *_: None)
+    opened = []
+    monkeypatch.setattr('music_sorter.ui.settings_dialog.QDesktopServices.openUrl', lambda url: opened.append(url.toLocalFile()) or True)
+    dialog = SettingsDialog(Settings(), tmp_path / 'settings.json', library)
+    qtbot.addWidget(dialog)
+    dialog.menu.setCurrentRow(1)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.db_path.isReadOnly() and dialog.db_path.isEnabled()
+    assert dialog.db_path.text() == str(library.path.resolve())
+    buttons = {button.accessibleName(): button for button in dialog.findChildren(QPushButton)}
+    old_clipboard = qapp.clipboard().text()
+    try:
+        qtbot.mouseClick(buttons['DB 파일 경로 복사'], Qt.MouseButton.LeftButton)
+        assert qapp.clipboard().text() == str(library.path.resolve())
+    finally:
+        qapp.clipboard().setText(old_clipboard)
+    qtbot.mouseClick(buttons['DB 파일 폴더 열기'], Qt.MouseButton.LeftButton)
+    from pathlib import Path
+    assert [Path(path) for path in opened] == [library.path.parent.resolve()]
+    assert not dialog.apply_button.isEnabled()
+
+
+def test_standard_confirmation_has_distinct_actions_without_changing_safe_default(qtbot, qapp):
+    from music_sorter.ui.theme import apply_theme
+    apply_theme(qapp, 'light', 1)
+    dialog = QMessageBox(QMessageBox.Icon.Question, '확인', '변경할까요?', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    dialog.setDefaultButton(QMessageBox.StandardButton.No)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.button(QMessageBox.StandardButton.Yes).property('primary')
+    assert not dialog.button(QMessageBox.StandardButton.No).property('primary')
+    assert dialog.defaultButton() == dialog.button(QMessageBox.StandardButton.No)
+
+
 def test_rejected_navigation_restores_filter_and_keeps_draft(qtbot, library, root, song, fake_reader, tmp_path, monkeypatch):
     scan_library(library, root)
     window = MainWindow(library, Settings(music_root=str(root)), tmp_path / "settings.json")

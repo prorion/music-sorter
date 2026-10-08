@@ -124,6 +124,7 @@ class ExternalDialog(QDialog):
         layout.addWidget(status)
         buttons = QHBoxLayout()
         select = QPushButton('선택한 녹음 연결 저장')
+        select.setProperty('primary', True)
         select.setEnabled(service == 'musicbrainz' and choices.count() > 0)
         def save():
             if not confirmed.isChecked():

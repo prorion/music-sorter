@@ -31,6 +31,7 @@ class HistoryDialog(QDialog):
         for title, action in [('이전 페이지', lambda: self.turn(-1)), ('다음 페이지', lambda: self.turn(1)),
                               ('선택한 변경 직전으로 DB 되돌리기', self.restore), ('닫기', self.reject)]:
             button = QPushButton(title)
+            button.setProperty('applyAction', action == self.restore)
             button.clicked.connect(action)
             buttons.addWidget(button)
         layout.addLayout(buttons)

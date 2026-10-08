@@ -342,6 +342,7 @@ class ClassifyDialog(QDialog):
         layout.addWidget(status)
         buttons = QHBoxLayout()
         apply = QPushButton('확인 기록 저장·예약 해제')
+        apply.setProperty('primary', True)
         close = QPushButton('예약 유지·닫기')
         close.clicked.connect(dialog.reject)
         def save():
