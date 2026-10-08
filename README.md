@@ -5,7 +5,7 @@ Windows용 mp3 음악 자동 분류 및 재생목록 생성기
 대량의 mp3 파일을 **장르 / 분위기 / 컨셉**으로 자동 분류하고,
 태그별 재생목록(M3U8 기본, M3U 선택)을 만들어 일반 음악 앱에서 들을 수 있게 합니다.
 
-> **소스 0.7.4 / 배포 0.7.3:** 밝게/어둡게 UI, 파일 정리·복구·재생목록·외부 녹음 후보 검토·OpenAI/Claude 분류 연결과 데이터/태그/검토 관리를 구현했습니다. 곰오디오에서 확인한 M3U8이 기본입니다. Claude 실제 동기/Batch 분류·취소·사용량 비용 검증을 마쳤으며 0.7.4 실행파일을 빌드 중입니다. 분류 정답률과 별도 장치 검증은 남아 있습니다. 최신 근거는 SPEC §17.11을 확인하세요.
+> **0.7.4:** 밝게/어둡게 UI, 파일 정리·복구·재생목록·외부 녹음 후보 검토·OpenAI/Claude 분류 연결과 데이터/태그/검토 관리를 구현했습니다. 곰오디오에서 확인한 M3U8이 기본입니다. Claude 실제 동기/Batch 분류·취소·사용량 비용과 새 실행파일의 독립 실행·결과 표시를 검증했습니다. 분류 정답률과 별도 장치 검증은 남아 있습니다. 최신 근거는 SPEC §17.11을 확인하세요.
 
 Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사용하도록 설계했습니다. 결정 상태·남은 검증은 [SPEC §14](docs/SPEC.md#14-결정-상태와-남은-검증), 개발 순서는 [SPEC §16](docs/SPEC.md#16-첫-버전-범위와-개발-순서), 실제 구현 현황은 [SPEC §17](docs/SPEC.md#17-구현검증-현황)을 봅니다.
 
@@ -62,16 +62,16 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe scripts\build_windows.py
 ```
 
-기존 실행파일을 사용 중이면 `scripts\build_windows.py --output-dir dist/0.7.3`으로 별도 빌드할 수 있습니다. 0.7.3 실행파일은 `dist/0.7.3/music-sorter.dist/main.exe`입니다. 실제 실행 검증 여부는 SPEC §17.10에서 확인합니다. 이전 버전을 종료한 뒤 새 실행파일을 열면 기존 데이터와 등록 키를 사용합니다. 앱 데이터는 실행파일 폴더와 별도 보관합니다.
+기존 실행파일을 사용 중이면 `scripts\build_windows.py --output-dir dist/0.7.4`으로 별도 빌드할 수 있습니다. 0.7.4 실행파일은 `dist/0.7.4/music-sorter.dist/main.exe`입니다. 실제 실행 검증 근거는 SPEC §17.11에서 확인합니다. 이전 버전을 종료한 뒤 새 실행파일을 열면 기존 데이터와 등록 키를 사용합니다. 앱 데이터는 실행파일 폴더와 별도 보관합니다.
 
 등록된 키의 읽기 전용 실제 연결 검증은 아래처럼 명시적으로 실행합니다. 모델 목록 GET만 요청하며 키나 응답 원문은 출력하지 않습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\verify_connections.py --live --output artifacts\new-api-check\live.json
-.\dist\0.7.3\music-sorter.dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
+.\dist\0.7.4\music-sorter.dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
 ```
 
-Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist/0.7.3/music-sorter.dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
+Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist/0.7.4/music-sorter.dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
 
 검증 출력 디렉터리는 새 이름으로 지정합니다. 음악 검증은 원본을 읽어 복사본을 만든 뒤 수행합니다. 벤치마크는 합성 DB이며 실제 음악 라이브러리의 처리 속도를 보증하지 않습니다.
 
