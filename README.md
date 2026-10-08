@@ -5,7 +5,7 @@ Windows용 mp3 음악 자동 분류 및 재생목록 생성기
 대량의 mp3 파일을 **장르 / 분위기 / 컨셉**으로 자동 분류하고,
 태그별 재생목록(M3U8 기본, M3U 선택)을 만들어 일반 음악 앱에서 들을 수 있게 합니다.
 
-> **0.7.5:** 설정 입력칸·숫자 조절 화살표·공통 팝업 버튼 구분과 DB 경로 복사/폴더 열기를 보완했습니다. 새 실행파일의 독립 실행과 실제 설정 화면을 검증했고 루트 바로가기에 연결했습니다. 기능·남은 검증의 근거는 SPEC §17.11~17.12를 확인하세요.
+> **0.7.6:** 중복 후보 비교에서 선택한 행의 파일을 확인 후 Windows 휴지통으로 이동할 수 있습니다. 유지 체크와 삭제 선택은 분리하며 한 개 이상 남겨야 합니다. 새 실행파일의 독립 실행·휴지통 이동·실제 확인창을 검증했고 루트 바로가기에 연결했습니다. 기능·남은 검증의 근거는 SPEC §17.11~17.13을 확인하세요.
 
 Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사용하도록 설계했습니다. 결정 상태·남은 검증은 [SPEC §14](docs/SPEC.md#14-결정-상태와-남은-검증), 개발 순서는 [SPEC §16](docs/SPEC.md#16-첫-버전-범위와-개발-순서), 실제 구현 현황은 [SPEC §17](docs/SPEC.md#17-구현검증-현황)을 봅니다.
 
@@ -27,7 +27,7 @@ Windows GUI와 설정 메뉴를 제공하고 OpenAI·Claude API를 선택해 사
 빌드된 앱은 프로젝트 루트의 **`music-sorter.lnk` 바로가기**를 더블클릭해 실행합니다. 성공한 빌드마다 같은 바로가기가 새 실행파일을 가리키도록 갱신됩니다. 실행파일과 DLL·리소스는 빌드 폴더에 함께 보관합니다. 프로젝트를 이동했거나 기존 빌드에 다시 연결하려면 아래 명령으로 바로가기만 생성합니다.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build_windows.py --output-dir dist/0.7.5 --shortcut-only
+.\.venv\Scripts\python.exe scripts\build_windows.py --output-dir dist/0.7.6 --shortcut-only
 ```
 
 Windows에서 Python 3.13으로 프로젝트 전용 가상환경을 만듭니다.
@@ -50,7 +50,7 @@ py -3.13 -m venv .venv
 
 1. `⚙ 설정 → 음악 라이브러리`에서 폴더를 선택하고 저장한 다음 `폴더 스캔`을 실행합니다. 첫 검증은 별도 음악 사본 폴더를 사용합니다.
 2. `Ctrl+F`로 검색하고 곡을 선택해 상세에서 수동 판정을 저장하거나 `분류 실행`에서 전송 입력과 예산을 확인합니다. 수동 수정한 항목은 자동 변경에서 보호합니다.
-3. `음악 정보 보완`은 외부 후보·참고 태그 조회입니다. 결과를 두 번 클릭해 근거와 후보를 검토합니다. `분류 검토`에서 미확정 항목과 제안을 해결하고 `중복 검토`에서 남길 파일을 선택합니다.
+3. `음악 정보 보완`은 외부 후보·참고 태그 조회입니다. 결과를 두 번 클릭해 근거와 후보를 검토합니다. `분류 검토`에서 미확정 항목과 제안을 해결하고 `중복 검토`에서 남길 파일을 체크합니다. 삭제할 파일은 행을 선택(Ctrl/Shift로 여러 개)하고 `선택 파일 삭제 · 휴지통`에서 확인합니다. 복원은 Windows 휴지통에서 한 뒤 폴더를 재스캔합니다.
 4. `파일 정리 미리보기`에서 이동·이름·장르 기록을 선택하고 원래/예정 경로와 보류 이유를 확인합니다. 실제 적용은 별도 버튼으로 실행합니다. `작업 이력`에서 중단된 작업과 되돌리기를 확인합니다.
 5. `재생목록 → 재생목록 관리·생성`에서 기본 목록과 선택한 AND 조합을 생성합니다. 음악 폴더 전체를 옮기면 상대 경로를 유지할 수 있습니다. 실제 대상 앱 호환 여부는 SPEC의 검증 상태를 확인하세요.
 
@@ -68,16 +68,16 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe scripts\build_windows.py
 ```
 
-기존 실행파일을 사용 중이면 `scripts\build_windows.py --output-dir dist/0.7.5`으로 별도 빌드할 수 있습니다. 0.7.5 실행파일은 `dist/0.7.5/music-sorter.dist/main.exe`입니다. 실제 실행 검증 근거는 SPEC §17.12에서 확인합니다. 이전 버전을 종료한 뒤 루트 바로가기를 열면 기존 데이터와 등록 키를 사용합니다. 앱 데이터는 실행파일 폴더와 별도 보관합니다.
+기존 실행파일을 사용 중이면 `scripts\build_windows.py --output-dir dist/0.7.6`으로 별도 빌드할 수 있습니다. 0.7.6 실행파일은 `dist/0.7.6/music-sorter.dist/main.exe`입니다. 실제 실행 검증 근거는 SPEC §17.13에서 확인합니다. 이전 버전을 종료한 뒤 루트 바로가기를 열면 기존 데이터와 등록 키를 사용합니다. 앱 데이터는 실행파일 폴더와 별도 보관합니다.
 
 등록된 키의 읽기 전용 실제 연결 검증은 아래처럼 명시적으로 실행합니다. 모델 목록 GET만 요청하며 키나 응답 원문은 출력하지 않습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\verify_connections.py --live --output artifacts\new-api-check\live.json
-.\dist\0.7.5\music-sorter.dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
+.\dist\0.7.6\music-sorter.dist\main.exe --data-dir artifacts\new-api-check\user-data --smoke-sdk --smoke-api --smoke-screen artifacts\new-api-check\packaged.png
 ```
 
-Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist/0.7.5/music-sorter.dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
+Claude의 무료 입력 계량과 실제 서버의 구조화 스키마 수용 여부는 `scripts/verify_token_count.py --live --output artifacts/new-token-check.json`으로 확인합니다. 이 검증은 합성 입력만 전송하고 생성·Batch 제출은 하지 않습니다. 전체 배포 검증은 `scripts/verify_bundle.py --bundle dist/0.7.6/music-sorter.dist --media-copy <검증용MP3사본> --output artifacts/new-bundle-check --live-api`로 한글 경로의 실행·SDK·재생·모델 조회와 폴더 전체 ZIP 무결성을 확인합니다. Python 관련 환경을 제거한 현재 PC의 확인이며 Python 미설치 별도 Windows 검증과 구분합니다.
 
 검증 출력 디렉터리는 새 이름으로 지정합니다. 음악 검증은 원본을 읽어 복사본을 만든 뒤 수행합니다. 벤치마크는 합성 DB이며 실제 음악 라이브러리의 처리 속도를 보증하지 않습니다.
 
