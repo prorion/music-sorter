@@ -109,6 +109,71 @@ def test_settings_actual_db_path_is_readonly_copyable_and_opens_containing_folde
     assert not dialog.apply_button.isEnabled()
 
 
+def test_duplicate_delete_selection_guard_and_confirmation_cancel(qtbot, library, root, song, fake_reader, tmp_path, monkeypatch):
+    import shutil
+    from music_sorter.scanner import scan_library
+    from music_sorter.ui.duplicates import DuplicateDialog
+    from PySide6.QtCore import Qt
+    copy = root / 'copy' / song.name
+    copy.parent.mkdir()
+    shutil.copy2(song, copy)
+    scan_library(library, root)
+    dialog = DuplicateDialog(library, 3, root=root)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert not dialog.delete_button.isEnabled()
+    dialog.table.selectRow(0)
+    assert dialog.delete_button.isEnabled()
+    warnings = []
+    monkeypatch.setattr('music_sorter.ui.duplicates.QMessageBox.warning', lambda *args: warnings.append(args[2]))
+    dialog.table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+    dialog.delete_selected()
+    assert warnings and dialog.worker is None
+    dialog.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    confirmations = []
+    def cancel(box):
+        confirmations.append((box.defaultButton().text(), box.detailedText()))
+        return 0
+    monkeypatch.setattr('music_sorter.ui.duplicates.QMessageBox.exec', cancel)
+    dialog.delete_selected()
+    qtbot.waitUntil(lambda: dialog.worker is None and bool(confirmations), timeout=10000)
+    assert confirmations[0][0] == '취소'
+    assert dialog.groups[0]['tracks'][0]['path'] in confirmations[0][1]
+    assert song.exists() and copy.exists()
+    assert all(job['kind'] != 'duplicate_delete' for job in library.jobs())
+
+
+def test_duplicate_confirmed_delete_refreshes_table_and_keeps_checked_survivor(qtbot, library, root, song, fake_reader, tmp_path, monkeypatch):
+    import shutil
+    from music_sorter.scanner import scan_library
+    from music_sorter.ui.duplicates import DuplicateDialog
+    from PySide6.QtCore import Qt
+    from pathlib import Path
+    copy = root / 'copy' / song.name
+    copy.parent.mkdir()
+    shutil.copy2(song, copy)
+    scan_library(library, root)
+    dialog = DuplicateDialog(library, 3, root=root)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    target, survivor = dialog.groups[0]['tracks']
+    dialog.table.item(1, 0).setCheckState(Qt.CheckState.Checked)
+    dialog.table.selectRow(0)
+    def recycle(path):
+        destination = tmp_path / 'fake-recycle.mp3'
+        shutil.move(path, destination)
+        return str(destination)
+    dialog.removal.recycle = recycle
+    monkeypatch.setattr('music_sorter.ui.duplicates.QMessageBox.exec', lambda *_: 0)
+    monkeypatch.setattr('music_sorter.ui.duplicates.QMessageBox.clickedButton',
+                        lambda box: next(button for button in box.buttons() if button.text() == '휴지통으로 이동'))
+    dialog.delete_selected()
+    qtbot.waitUntil(lambda: dialog.worker is None and '휴지통 이동 1' in dialog.status.text(), timeout=10000)
+    assert not Path(target['path']).exists() and Path(survivor['path']).exists()
+    assert dialog.table.rowCount() == 0 and not dialog.delete_button.isEnabled()
+    assert library.track(target['id'])['file_state'] == 'missing'
+
+
 def test_standard_confirmation_has_distinct_actions_without_changing_safe_default(qtbot, qapp):
     from music_sorter.ui.theme import apply_theme
     apply_theme(qapp, 'light', 1)

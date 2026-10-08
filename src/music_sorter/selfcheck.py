@@ -2,6 +2,48 @@
 import json
 
 
+def verify_recycle(source, output):
+    """Use two new media copies, never the caller's source, for native recycling QA."""
+    import shutil
+    from pathlib import Path
+    from .database import Library
+    from .scanner import scan_library
+    from .recycle import DuplicateRemoval
+    from .tag_io import digest
+
+    output = Path(output)
+    if output.exists():
+        raise ValueError('휴지통 검증에는 새 검증 폴더가 필요합니다.')
+    root = output / '한글 검증 사본'
+    root.mkdir(parents=True)
+    source = Path(source)
+    source_hash = digest(source)
+    for folder in ('유지', '삭제'):
+        destination = root / folder / source.name
+        destination.parent.mkdir()
+        shutil.copy2(source, destination)
+    library = Library(output / 'user-data' / 'library.sqlite3')
+    scan_library(library, root)
+    group = library.duplicate_groups()[0]
+    target = next(item for item in group['tracks'] if Path(item['path']).parent.name == '삭제')
+    survivor = next(item for item in group['tracks'] if item['id'] != target['id'])
+    engine = DuplicateRemoval(library, root)
+    result = engine.apply(engine.preview(group, [target['id']]))
+    receipt = result['targets'][0]
+    report = dict(completed=result['processed'] == 1 and result['failed'] == 0,
+                  source_unchanged=digest(source) == source_hash,
+                  survivor_unchanged=digest(Path(survivor['path'])) == source_hash,
+                  deleted_copy_absent=not Path(target['path']).exists(),
+                  recycle_copy_hash_matches=bool(receipt.get('recycle_path')) and digest(Path(receipt['recycle_path'])) == source_hash,
+                  db_marked_missing=library.track(target['id'])['file_state'] == 'missing',
+                  original_library_modified=False)
+    (output / 'report.json').write_text(json.dumps(report, indent=2), 'utf-8')
+    if not all(report[key] for key in ('completed', 'source_unchanged', 'survivor_unchanged',
+                                      'deleted_copy_absent', 'recycle_copy_hash_matches', 'db_marked_missing')):
+        raise ValueError('네이티브 휴지통 검증 실패. 검증 결과를 확인하세요.')
+    return report
+
+
 def verify_sdks():
     import anthropic
     import httpx2

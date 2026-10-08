@@ -24,6 +24,7 @@ def main(argv=None) -> int:
     parser.add_argument("--smoke-media", type=Path, help="렌더 검증과 함께 복사본 MP3를 음소거 재생")
     parser.add_argument("--smoke-api", action="store_true", help="렌더 검증과 함께 등록된 키의 모델 목록만 조회")
     parser.add_argument('--smoke-sdk', action='store_true', help='SDK 직렬화·응답 검증. 네트워크·유료 요청 없이 수행')
+    parser.add_argument('--smoke-recycle', action='store_true', help='새 MP3 검증 사본 두 개로 Windows 휴지통 이동 확인')
     args = parser.parse_args(argv)
     if args.smoke_media and not args.smoke_screen:
         parser.error("--smoke-media는 --smoke-screen과 함께 사용하세요.")
@@ -31,6 +32,8 @@ def main(argv=None) -> int:
         parser.error("--smoke-api는 --smoke-screen과 함께 사용하세요.")
     if args.smoke_sdk and not args.smoke_screen:
         parser.error('--smoke-sdk는 --smoke-screen과 함께 사용하세요.')
+    if args.smoke_recycle and not (args.smoke_screen and args.smoke_media):
+        parser.error('--smoke-recycle은 --smoke-screen 및 --smoke-media와 함께 사용하세요.')
     app = QApplication(sys.argv[:1])
     QLoggingCategory.setFilterRules("qt.multimedia.ffmpeg.*=false")
     app.setApplicationName("music-sorter")
@@ -62,6 +65,9 @@ def main(argv=None) -> int:
         TAXONOMY.clear()
         TAXONOMY.update(catalog)
         library.recover_interrupted_jobs()
+        if settings.music_root:
+            from .recycle import DuplicateRemoval
+            DuplicateRemoval(library, Path(settings.music_root)).recover()
         from .classifier import Classifier
         Classifier(library).recover()
         apply_theme(app, settings.theme, settings.font_scale)
@@ -77,6 +83,10 @@ def main(argv=None) -> int:
         api_dialog = None
         api_report = {}
         sdk_report = None
+        recycle_report = None
+        if args.smoke_recycle:
+            from .selfcheck import verify_recycle
+            recycle_report = verify_recycle(args.smoke_media, args.data_dir.parent / 'recycle-selfcheck')
         if args.smoke_sdk:
             from .selfcheck import verify_sdks
             sdk_report = verify_sdks()
@@ -98,6 +108,8 @@ def main(argv=None) -> int:
                               media_position_advanced=advanced)
                 if sdk_report:
                     report['sdk_selfcheck'] = sdk_report
+                if recycle_report:
+                    report['recycle_selfcheck'] = recycle_report
                 if api_dialog:
                     report["connections"] = api_report
                     report["generation_requests"] = 0

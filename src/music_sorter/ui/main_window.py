@@ -376,8 +376,13 @@ class MainWindow(QMainWindow):
             self.offset = 0
             self.refresh()
         elif index == 2:
+            if self.worker and self.worker.isRunning():
+                self.status.setText('스캔을 마치거나 취소한 뒤 중복 후보를 비교하세요.')
+                self.navigation.setCurrentRow(0)
+                return
             self.player.stop()
-            DuplicateDialog(self.library, self.settings.duplicate_tolerance_seconds, self).exec()
+            DuplicateDialog(self.library, self.settings.duplicate_tolerance_seconds, self,
+                            root=self.settings.music_root or None).exec()
             self.navigation.setCurrentRow(0)
         elif index == 3:
             self.pages.setCurrentIndex(1)
@@ -614,7 +619,7 @@ class MainWindow(QMainWindow):
         jobs = self.library.jobs()
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
-            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정", 'file_preview': '파일 정리·복구', 'playlists': '재생목록 생성'}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
+            for column, value in enumerate(({"scan": "음악 스캔", "manual_bulk": "일괄 분류 수정", 'file_preview': '파일 정리·복구', 'playlists': '재생목록 생성', 'duplicate_delete': '중복 파일 휴지통 이동'}.get(job["kind"], job["kind"]), STATE_LABELS.get(job["state"], job["state"]),
                                            job["processed"], job["failed"], job["started_at"])):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, job['id'])

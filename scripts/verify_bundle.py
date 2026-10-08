@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--media-copy', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--live-api', action='store_true', help='등록된 키의 모델 목록 GET만 확인')
+    parser.add_argument('--recycle', action='store_true', help='새 검증 사본의 네이티브 휴지통 이동도 확인')
     args = parser.parse_args()
     bundle, output = args.bundle.resolve(), args.output.resolve()
     if output.exists() or bundle == output or bundle in output.parents or output in bundle.parents:
@@ -41,10 +42,14 @@ def main():
                '--smoke-media', str(args.media_copy.resolve()), '--smoke-screen', str(snapshot)]
     if args.live_api:
         command.append('--smoke-api')
+    if args.recycle:
+        command.append('--smoke-recycle')
     result = subprocess.run(command, env=environment, cwd=copied, timeout=180)
     smoke = json.loads(snapshot.with_suffix('.json').read_text('utf-8'))
     if result.returncode != 0 or not smoke.get('sdk_selfcheck', {}).get('completed') or not smoke.get('media_position_advanced'):
         raise ValueError('독립 배포 실행 검증 실패. 출력 JSON을 확인하세요.')
+    if args.recycle and not smoke.get('recycle_selfcheck', {}).get('completed'):
+        raise ValueError('독립 배포 휴지통 이동 검증 실패.')
     archive = output / 'music-sorter-windows-x64.zip'
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
         for path in files:

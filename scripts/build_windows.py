@@ -51,7 +51,7 @@ if ($saved.TargetPath -ne $env:MUSIC_SORTER_SHORTCUT_TARGET -or $saved.WorkingDi
 def write_notices(bundle, version):
     license_root = bundle / 'third-party-licenses'
     license_root.mkdir(exist_ok=True)
-    pending, seen, notices = ['PySide6', 'mutagen', 'keyring', 'openai', 'anthropic'], set(), []
+    pending, seen, notices = ['PySide6', 'mutagen', 'keyring', 'openai', 'anthropic', 'pywin32'], set(), []
     while pending:
         name = pending.pop()
         key = canonicalize_name(name)
@@ -84,6 +84,8 @@ def write_notices(bundle, version):
         '1. 설정 → 음악 라이브러리에서 폴더를 등록하고 폴더 스캔을 실행합니다.\n'
         '2. 설정 → LLM / API 연결에서 OpenAI·Claude 키를 등록하고 모델을 조회합니다.\n'
         '3. 분류 실행에서 대상·전송 입력·작업 예산을 확인하고 별도로 제출합니다.\n'
+        '   중복 검토에서는 삭제할 행을 선택하고 확인 후 휴지통으로 이동할 수 있습니다.\n'
+        '   복원은 Windows 휴지통에서 한 뒤 폴더를 재스캔합니다. 영구 삭제는 제공하지 않습니다.\n'
         '4. 파일 정리 미리보기에서 변경 경로를 확인한 뒤 실제 적용을 선택합니다.\n'
         '5. 작업 이력에서 중단 작업을 재개하거나 파일 변경을 되돌릴 수 있습니다.\n'
         '6. 재생목록 메뉴에서 태그 목록과 조합 목록을 생성합니다.\n\n'
@@ -128,6 +130,9 @@ def main():
                         "--include-package=openai.resources.responses --include-package=openai.types.responses "
                         "--include-module=openai.resources.files --include-module=openai.resources.batches "
                         "--include-package=anthropic.resources.messages --include-package=anthropic.types "
+                        "--include-module=pythoncom --include-module=pywintypes --include-module=win32file "
+                        "--include-module=win32com.shell.shell --include-module=win32com.shell.shellcon "
+                        "--include-module=win32com.server.policy --include-module=win32com.server.exception "
                         "--assume-yes-for-downloads"}
     target = build / "windows.spec"
     with target.open("w", encoding="utf-8") as stream:
