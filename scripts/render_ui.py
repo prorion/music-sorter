@@ -87,7 +87,6 @@ def main():
             from music_sorter.ui.classify_dialog import ClassifyDialog
             from music_sorter.ui.external_dialog import ExternalDialog
             classify = ClassifyDialog(library, settings, [window.model.rows[0]['id']] if window.model.rows else [], {}, window)
-            classify.budget.setText('1')
             classify.show()
             app.processEvents()
             classify.grab().save(str(args.output / 'classification-plan.png'))

@@ -79,6 +79,11 @@ class ScanControl:
     def __init__(self):
         self.cancelled = threading.Event()
         self.paused = threading.Event()
+        self.status = None
+
+    def report(self, text):
+        if self.status:
+            self.status(text)
 
     def checkpoint(self):
         while self.paused.is_set():

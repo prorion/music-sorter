@@ -1,12 +1,13 @@
 from PySide6.QtCore import QThread
 
-from ..connections import ConnectionError, list_models
+from ..connections import ConnectionError, get_model, list_models
 
 
 class ConnectionWorker(QThread):
-    def __init__(self, provider, vault, workspace_id="", parent=None):
+    def __init__(self, provider, vault, workspace_id="", parent=None, model_id=None):
         super().__init__(parent)
         self.provider, self.vault, self.workspace_id = provider, vault, workspace_id
+        self.model_id = model_id
         self.outcome = None
         self.message = ""
 
@@ -17,7 +18,8 @@ class ConnectionWorker(QThread):
             self.message = "저장소 접근 오류 · Windows 자격 증명 저장소를 확인하세요."
             return
         try:
-            self.outcome = list_models(self.provider, key or "", self.workspace_id)
+            self.outcome = (get_model(self.provider, key or '', self.model_id, self.workspace_id) if self.model_id
+                            else list_models(self.provider, key or "", self.workspace_id))
         except ConnectionError as error:
             self.message = str(error)
         except Exception:

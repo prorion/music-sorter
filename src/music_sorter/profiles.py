@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .classifier import budget_micro
 
 
 MAPPING = dict(UI_THEME=('theme', str), UI_FONT_SCALE=('font_scale', float), NOTIFY_ON_COMPLETION=('notify_on_completion', bool),
@@ -23,7 +22,7 @@ MAPPING.update(TRACKS_PER_REQUEST=('llm_tracks_per_request', int),
                API_TIMEOUT_SECONDS=('llm_timeout_seconds', int), API_MAX_RETRIES=('llm_max_retries', int),
                CLASSIFY_INCLUDE_LYRICS=('include_lyrics_default', bool))
 KEYS = dict(OPENAI_API_KEY='openai', ANTHROPIC_API_KEY='anthropic', LASTFM_API_KEY='lastfm')
-JOB_OPTIONS = {'LLM_JOB_BUDGET_USD', 'LLM_EXECUTION_MODE', 'CLASSIFY_INCLUDE_LYRICS'}
+JOB_OPTIONS = {'LLM_EXECUTION_MODE', 'CLASSIFY_INCLUDE_LYRICS'}
 
 
 @dataclass(repr=False)
@@ -89,9 +88,6 @@ def load_profile(path, base, environment=None):
     if any(any(ord(char) < 33 or ord(char) > 126 for char in value) for value in keys.values()):
         raise ValueError('개발 프로필 API 키의 공백·줄바꿈·문자 형식을 확인하세요.')
     defaults = {}
-    if values.get('LLM_JOB_BUDGET_USD'):
-        budget_micro(values['LLM_JOB_BUDGET_USD'])
-        defaults['budget'] = values['LLM_JOB_BUDGET_USD']
     if values.get('LLM_EXECUTION_MODE'):
         if values['LLM_EXECUTION_MODE'] not in {'sync', 'batch'}:
             raise ValueError('LLM_EXECUTION_MODE는 sync 또는 batch입니다.')

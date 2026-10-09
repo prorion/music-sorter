@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtCore import Qt, Signal, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                               QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 
 from ..database import Library, now
 from ..settings import CredentialStore, Settings
+from ..llm import MODEL_NAMES, canonical_model, price, price_stale, supported_model
 from .connection_worker import ConnectionWorker
+from .workflow import LiveStatus
 
 
 class SettingsDialog(QDialog):
@@ -23,6 +25,12 @@ class SettingsDialog(QDialog):
         self.connection_worker = None
         self.data_worker = None
         self.model_lists = {}
+        self.model_checks, self.connection_queue = {}, []
+        self.model_providers = [settings.classify_provider, settings.escalate_provider]
+        self.model_timer = QTimer(self)
+        self.model_timer.setSingleShot(True)
+        self.model_timer.setInterval(250)
+        self.model_timer.timeout.connect(self.queue_selected_models)
         self.setWindowTitle("설정 · music-sorter")
         self.resize(850, 640)
         self.setMinimumSize(780, 600)
@@ -84,7 +92,7 @@ class SettingsDialog(QDialog):
         music.addRow(database)
 
         api = self.page("AI / API 연결")
-        api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n연결 확인은 모델 목록만 조회합니다. 음악 전송·분류 요청은 하지 않습니다."))
+        api.addRow(self.note("키 등록·삭제는 즉시 자격 증명 저장소에 반영됩니다. 창 취소로 되돌리지 않습니다.\n모델 목록·선택 모델 확인은 조회만 합니다. 음악 전송·분류 요청은 하지 않습니다."))
         if CredentialStore.profile_keys is not None:
             api.addRow(self.note('명시적 개발 프로필/프로세스 환경 변수의 세션 키를 사용 중입니다.\n자격 증명 저장소의 키는 섞지 않습니다. 키 등록·삭제는 기본 모드에서 진행하세요.'))
         self.key_edits = {}
@@ -135,8 +143,8 @@ class SettingsDialog(QDialog):
         self.workspace.textChanged.connect(lambda: self.invalidate_connection("anthropic"))
         api.addRow("Claude 워크스페이스 ID", self.workspace)
 
-        classification = self.page("분류와 비용")
-        self.providers, self.models = [], []
+        classification = self.page("LLM 모델 / 비용")
+        self.providers, self.models, self.model_states, self.model_costs = [], [], [], []
         for prefix, provider, model in (("처음 분류", settings.classify_provider, settings.classify_model),
                                          ("다시 분류", settings.escalate_provider, settings.escalate_model)):
             combo = QComboBox()
@@ -144,16 +152,25 @@ class SettingsDialog(QDialog):
             combo.addItem("OpenAI", "openai")
             combo.setCurrentIndex(combo.findData(provider))
             edit = QComboBox()
-            edit.setEditable(True)
-            edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-            edit.setEditText(model)
+            edit.addItem(model, model)
             self.providers.append(combo)
             self.models.append(edit)
             classification.addRow(f"{prefix} 서비스", combo)
-            classification.addRow(f"{prefix} 모델 ID", edit)
+            classification.addRow(f"{prefix} 모델", edit)
+            status, cost = LiveStatus('모델 목록 조회 전'), QLabel()
+            cost.setObjectName('subtle')
+            cost.setWordWrap(True)
+            self.model_states.append(status)
+            self.model_costs.append(cost)
+            classification.addRow(status)
+            classification.addRow(cost)
             combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
-        classification.addRow(self.note("AI / API 연결에서 불러온 모델을 선택하거나 모델 ID를 직접 입력하세요.\n연결 확인은 모델 목록 조회입니다. 실제 분류 가능 여부와 서비스 잔액은 실행할 때 확인합니다."))
-        classification.addRow(self.note("메인 화면의 「3. AI 분류」에서 곡·처리 방법·예산(미국 달러)을 선택합니다.\n가사는 기본적으로 보내지 않으며, 다시 분류할 때만 선택해서 보낼 수 있습니다.\n요금 정보를 확인하지 못한 모델은 실행할 수 없습니다. AI 결과는 틀릴 수 있어 확인이 필요합니다."))
+            edit.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.model_selected(i))
+        self.refresh_model_button = QPushButton('목록 새로 고침')
+        self.refresh_model_button.clicked.connect(self.refresh_model_lists)
+        classification.addRow(self.refresh_model_button)
+        classification.addRow(self.note('이 화면을 열면 등록한 키로 모델 목록을 불러옵니다. 모델을 선택하면 접근·앱 호환 상태를 확인합니다.\n이 확인에는 음악 전송이나 AI 생성이 없습니다. 실제 실행 권한·잔액은 분류 실행 시 확인됩니다.'))
+        classification.addRow(self.note('메인 「3. AI 분류」에서 곡과 처리 방법을 선택하고 실행하세요. 예산 입력은 없습니다.\n가사는 기본적으로 보내지 않으며 다시 분류할 때만 선택할 수 있습니다. 비용은 참고 단가이며 실제 사용량은 작업 기록에 남습니다.'))
         catalog = QPushButton('분류 이름 관리')
         catalog.clicked.connect(self.open_catalog)
         classification.addRow(catalog)
@@ -171,6 +188,9 @@ class SettingsDialog(QDialog):
         self.lyrics_default.setChecked(settings.include_lyrics_default)
         classification.addRow(self.lyrics_default)
         classification.addRow(self.note('AI 요청은 한 번에 하나씩 보냅니다. 응답이 없거나 서버 오류가 나면 자동으로 다시 보내지 않습니다.\n토큰은 AI 응답의 길이를 세는 단위입니다. 한도가 낮으면 결과가 잘릴 수 있습니다. 변경은 새 작업부터 적용합니다.'))
+        for index in range(len(self.models)):
+            self.refresh_models(index)
+        self.menu.currentRowChanged.connect(self.model_page_opened)
 
         external = self.page("인터넷 곡 정보")
         self.musicbrainz_enabled = QCheckBox('MusicBrainz 정보 조회')
@@ -331,6 +351,8 @@ class SettingsDialog(QDialog):
 
     def invalidate_connection(self, provider):
         self.model_lists.pop(provider, None)
+        self.model_checks = {key: value for key, value in self.model_checks.items() if key[0] != provider}
+        self.connection_queue = [item for item in self.connection_queue if item[1] != provider]
         self.refresh_key(provider)
         if provider in self.connection_details:
             self.connection_details[provider].setText("확인 결과는 이 창에서만 유지됩니다.")
@@ -341,14 +363,92 @@ class SettingsDialog(QDialog):
 
     def refresh_models(self, index):
         combo = self.models[index]
-        text = combo.currentText()
+        identity = self.model_id(index)
+        provider = self.providers[index].currentData()
+        if self.model_providers[index] != provider:
+            identity = 'claude-haiku-5-5' if provider == 'anthropic' else 'gpt-5.4-mini'
+        self.model_providers[index] = provider
         combo.blockSignals(True)
         combo.clear()
-        for model in self.model_lists.get(self.providers[index].currentData(), ()):
-            combo.addItem(model.id)
-            combo.setItemData(combo.count() - 1, model.name, Qt.ItemDataRole.ToolTipRole)
-        combo.setEditText(text)
+        available = {model.id: model.name for model in self.model_lists.get(provider, ())}
+        if provider not in self.model_lists:
+            available.update({model: name for (service, model), name in MODEL_NAMES.items() if service == provider})
+        # Keep a saved alias/offline choice visible; a GET validates it independently.
+        available.setdefault(identity, MODEL_NAMES.get((provider, canonical_model(provider, identity)), identity))
+        for model, name in sorted(available.items(), key=lambda item: (item[0] != 'claude-haiku-5-5', item[0])):
+            combo.addItem(f'{name} · {model}' if name != model else model, model)
+            combo.setItemData(combo.count() - 1, model, Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(combo.findData(identity))
         combo.blockSignals(False)
+        self.model_selected(index)
+
+    def model_id(self, index):
+        return self.models[index].currentData() or ''
+
+    def model_selected(self, index):
+        provider, model = self.providers[index].currentData(), self.model_id(index)
+        checked = self.model_checks.get((provider, model))
+        self.model_states[index].setText(checked or '미확인 · 이 화면에서 모델을 조회합니다.')
+        try:
+            rates = price(provider, model)
+            text = f'참고: 100만 토큰당 입력 US${rates["input"]} / 출력 US${rates["output"]} · 확인 {rates["checked"]}'
+            if price_stale(rates):
+                text += ' · 오래된 참고 단가'
+            if rates.get('long_threshold'):
+                text += f'\n입력 100K 초과: US${rates["long_input"]} / US${rates["long_output"]} · Batch는 50% 할인'
+            self.model_costs[index].setText(text)
+        except ValueError:
+            self.model_costs[index].setText('참고 단가 없음 · 앱 지원 여부를 확인하세요.')
+        if self.menu.currentRow() == 3:
+            self.model_timer.start()
+
+    def model_page_opened(self, index):
+        if index == 3:
+            self.refresh_model_lists(only_missing=True)
+
+    def refresh_model_lists(self, _checked=False, *, only_missing=False):
+        for provider in dict.fromkeys(combo.currentData() for combo in self.providers):
+            if not only_missing:
+                self.invalidate_connection(provider)
+            if provider not in self.model_lists:
+                self.enqueue_connection('list', provider)
+        self.queue_selected_models()
+
+    def queue_selected_models(self):
+        if self.menu.currentRow() != 3:
+            return
+        for index, combo in enumerate(self.providers):
+            provider, model = combo.currentData(), self.model_id(index)
+            if provider not in self.model_lists:
+                self.enqueue_connection('list', provider)
+            if (provider, model) not in self.model_checks:
+                self.enqueue_connection('model', provider, model)
+
+    def enqueue_connection(self, kind, provider, model=None):
+        try:
+            registered = bool(self.vault.get(provider))
+        except Exception:
+            registered = False
+        if not registered or self.key_edits[provider].text():
+            for index, combo in enumerate(self.providers):
+                if combo.currentData() == provider:
+                    self.model_states[index].setText('키 미등록/입력 중 · AI / API 연결에서 먼저 등록하세요.')
+            return
+        item = (kind, provider, model)
+        active = self.connection_worker
+        if item not in self.connection_queue and not (active and active.provider == provider and active.model_id == model):
+            self.connection_queue.append(item)
+        self.start_next_connection()
+
+    def start_next_connection(self):
+        if self.connection_busy() or not self.connection_queue:
+            return
+        kind, provider, model = self.connection_queue.pop(0)
+        # A selection changed while another request was running: skip stale queued work.
+        if kind == 'model' and not any(combo.currentData() == provider and self.model_id(i) == model for i, combo in enumerate(self.providers)):
+            self.start_next_connection()
+            return
+        self.begin_connection(provider, model)
 
     def connection_busy(self):
         return self.connection_worker is not None or self.data_worker is not None
@@ -360,15 +460,22 @@ class SettingsDialog(QDialog):
             self.connection_details[provider].setText("입력 중인 키는 미등록입니다. 먼저 등록 / 교체를 눌러 저장하세요.")
             return
         self.invalidate_connection(provider)
+        self.begin_connection(provider)
+
+    def begin_connection(self, provider, model=None):
         self.key_states[provider].setText("연결 확인 중…")
-        self.connection_details[provider].setText("모델 목록 조회 중 · 설정 창 종료는 조회 완료 후 가능합니다.")
+        self.connection_details[provider].setText('선택 모델 확인 중…' if model else '모델 목록 조회 중…')
+        for index, combo in enumerate(self.providers):
+            if combo.currentData() == provider and (not model or self.model_id(index) == model):
+                self.model_states[index].setText('선택 모델 확인 중…' if model else '모델 목록 불러오는 중…')
         for button in self.connection_buttons.values():
             button.setEnabled(False)
         for buttons in self.key_buttons.values():
             for button in buttons:
                 button.setEnabled(False)
         self.workspace.setEnabled(False)
-        worker = ConnectionWorker(provider, self.vault, self.workspace.text().strip(), self)
+        self.refresh_model_button.setEnabled(False)
+        worker = ConnectionWorker(provider, self.vault, self.workspace.text().strip(), self, model_id=model)
         self.connection_worker = worker
         self.update_apply_state()
         worker.finished.connect(self.connection_finished)
@@ -388,18 +495,57 @@ class SettingsDialog(QDialog):
             except Exception:
                 self.connection_buttons[service].setEnabled(False)
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        if worker.outcome is None:
+        if worker.workspace_id != self.workspace.text().strip():
+            self.connection_worker = None
+            worker.deleteLater()
+            self.refresh_model_button.setEnabled(True)
+            self.update_apply_state()
+            self.start_next_connection()
+            return
+        if worker.model_id:
+            model = worker.model_id
+            if worker.outcome is None:
+                message = '확인 실패 · ' + worker.message
+            elif canonical_model(provider, worker.outcome.id) != canonical_model(provider, model):
+                message = '확인 실패 · 선택한 모델과 조회 응답이 다릅니다.'
+            elif worker.outcome.lifecycle == 'retired':
+                message = '사용 불가 · 제공이 종료된 모델입니다.'
+            elif not supported_model(provider, model):
+                message = '모델 접근 확인 · 앱 분류 기능에서 아직 지원하지 않는 모델입니다.'
+            elif worker.outcome.capabilities.get('structured_outputs') is False:
+                message = '사용 불가 · 이 모델은 분류 결과 형식을 지원하지 않습니다.'
+            else:
+                message = '모델 조회 완료 · 앱 분류 지원'
+                if worker.outcome.capabilities.get('batch') is False:
+                    message += ' · 바로 처리만 지원'
+                elif worker.outcome.capabilities.get('batch'):
+                    message += ' · 서버 처리 지원'
+                if worker.outcome.lifecycle == 'deprecated':
+                    message += ' · 종료 예정'
+            self.model_checks[(provider, model)] = message
+            for index, combo in enumerate(self.providers):
+                if combo.currentData() == provider and self.model_id(index) == model:
+                    self.model_states[index].setText(message)
+            self.connection_details[provider].setText(message + f' · {stamp}')
+            self.key_states[provider].setText('연결 확인됨' if worker.outcome else '연결 오류')
+        elif worker.outcome is None:
             self.key_states[provider].setText("연결 오류")
             self.connection_details[provider].setText(f"{worker.message}\n확인 시각: {stamp}")
+            for index, combo in enumerate(self.providers):
+                if combo.currentData() == provider:
+                    self.model_states[index].setText('목록 조회 실패 · ' + worker.message)
         else:
             self.model_lists[provider] = worker.outcome.models
             self.key_states[provider].setText("연결 확인됨")
             self.connection_details[provider].setText(f"모델 {len(worker.outcome.models)}개 조회 · {stamp}\n분류 실행 권한·잔액은 별도 확인이 필요합니다.")
-        for index in range(len(self.providers)):
-            self.refresh_models(index)
+        if worker.model_id is None and worker.outcome is not None:
+            for index in range(len(self.providers)):
+                self.refresh_models(index)
         self.connection_worker = None
+        self.refresh_model_button.setEnabled(True)
         self.update_apply_state()
         worker.deleteLater()
+        self.start_next_connection()
 
     def save_key(self, provider):
         if self.connection_busy():
@@ -428,8 +574,8 @@ class SettingsDialog(QDialog):
                           font_scale=self.scale.value(), include_subfolders=self.recursive.isChecked(),
                           scan_exclude_folders=list(dict.fromkeys(line.strip() for line in self.exclusions.toPlainText().splitlines() if line.strip())),
                           notify_on_completion=self.notify.isChecked(), duplicate_tolerance_seconds=self.tolerance.value(),
-                          classify_provider=self.providers[0].currentData(), classify_model=self.models[0].currentText().strip(),
-                          escalate_provider=self.providers[1].currentData(), escalate_model=self.models[1].currentText().strip(),
+                          classify_provider=self.providers[0].currentData(), classify_model=self.model_id(0),
+                          escalate_provider=self.providers[1].currentData(), escalate_model=self.model_id(1),
                           anthropic_workspace_id=self.workspace.text().strip(),
                           musicbrainz_enabled=self.musicbrainz_enabled.isChecked(), musicbrainz_contact=self.musicbrainz_contact.text().strip(),
                           lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value(),
@@ -440,6 +586,8 @@ class SettingsDialog(QDialog):
     def done(self, result):
         if self.connection_busy():
             return
+        self.model_timer.stop()
+        self.connection_queue.clear()
         super().done(result)
 
     def closeEvent(self, event):

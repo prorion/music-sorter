@@ -1,6 +1,31 @@
 """Compact task entries and shared in-dialog guidance."""
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout
+
+
+class LiveStatus(QLabel):
+    """One current message, elided without growing the dialog or accumulating logs."""
+    def __init__(self, text='', parent=None):
+        super().__init__(parent)
+        self.message = ''
+        self.setObjectName('taskGuide')
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
+        self.setText(text)
+
+    def setText(self, text):
+        self.message = ' '.join(str(text).split())
+        self.setToolTip(self.message)
+        self.setFixedHeight(self.fontMetrics().height() + 24)
+        self.render_message()
+
+    def render_message(self):
+        super().setText(self.fontMetrics().elidedText(self.message, Qt.TextElideMode.ElideRight, max(0, self.width() - 24)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.render_message()
 
 
 class WorkflowButton(QPushButton):

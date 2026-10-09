@@ -132,24 +132,61 @@ def parse_tracks(text, expected_ids, taxonomy=None):
 
 
 PRICES = {
+    ('anthropic', 'claude-haiku-5-5'): ('0.10', '0.50', '0.01', 'https://www.anthropic.com/claude-haiku-5-5'),
     ('anthropic', 'claude-haiku-4-5'): ('1', '5', '0.1', 'https://platform.claude.com/docs/en/about-claude/pricing'),
     ('anthropic', 'claude-sonnet-5-5'): ('2', '10', '0.1', 'https://platform.claude.com/docs/en/about-claude/pricing'),
     ('openai', 'gpt-5.4-mini'): ('0.75', '4.5', '0.075', 'https://developers.openai.com/api/docs/models/gpt-5.4-mini'),
 }
-PRICE_CHECKED = '2026-10-08'
+PRICE_CHECKED = '2026-10-09'
+MODEL_NAMES = {
+    ('anthropic', 'claude-haiku-5-5'): 'Claude Haiku 5.5',
+    ('anthropic', 'claude-haiku-4-5'): 'Claude Haiku 4.5',
+    ('anthropic', 'claude-sonnet-5-5'): 'Claude Sonnet 5.5',
+    ('openai', 'gpt-5.4-mini'): 'GPT-5.4 mini',
+}
+
+
+def canonical_model(provider, model):
+    if provider == 'anthropic' and model == 'claude-haiku-4-5-20251001':
+        return 'claude-haiku-4-5'
+    return model
+
+
+def supported_model(provider, model):
+    return (provider, canonical_model(provider, model)) in MODEL_NAMES
+
+
+def price_stale(pricing):
+    return (date.today() - date.fromisoformat(pricing['checked'])).days > 30
+
+
+def output_limit(options, count):
+    limit = count * options['max_tokens_per_track']
+    return max(4096, limit) if options['model'] == 'claude-haiku-5-5' else limit
 
 
 def price(provider, model, execution='sync'):
-    key = (provider, model)
-    if key not in PRICES or not 0 <= (date.today() - date.fromisoformat(PRICE_CHECKED)).days <= 30:
-        raise ValueError('확인된 최신 단가가 없습니다. 모델·단가를 확인하세요.')
+    key = (provider, canonical_model(provider, model))
+    if key not in PRICES:
+        raise ValueError('이 모델은 아직 앱의 분류 기능에서 지원하지 않습니다. 설정에서 지원 모델을 선택하세요.')
     incoming, outgoing, cached, source = PRICES[key]
     factor = Decimal('.5') if execution == 'batch' else Decimal(1)
-    return {'input': str(Decimal(incoming) * factor), 'output': str(Decimal(outgoing) * factor),
-            'cached': str(Decimal(cached) * factor), 'source': source, 'checked': PRICE_CHECKED, 'currency': 'USD'}
+    result = {'input': str(Decimal(incoming) * factor), 'output': str(Decimal(outgoing) * factor),
+              'cached': str(Decimal(cached) * factor), 'source': source, 'checked': PRICE_CHECKED, 'currency': 'USD'}
+    if key == ('anthropic', 'claude-haiku-5-5'):
+        result.update(long_threshold=100000, long_input=str(Decimal('0.50') * factor),
+                      long_output=str(Decimal('2.50') * factor), long_cached=str(Decimal('0.05') * factor))
+    return result
+
+
+def rates_for(pricing, incoming):
+    if incoming > pricing.get('long_threshold', float('inf')):
+        return dict(pricing, **{name: pricing['long_' + name] for name in ('input', 'output', 'cached')})
+    return pricing
 
 
 def cost_micro(pricing, incoming, outgoing, cached=0, cache_write=0):
+    pricing = rates_for(pricing, incoming + cached + cache_write)
     # USD/MTok * tokens equals micro-USD. Cache write upper price includes the 1h multiplier.
     return int((Decimal(pricing['input']) * (incoming + cache_write * 2) + Decimal(pricing['output']) * outgoing
                 + Decimal(pricing['cached']) * cached).to_integral_value(rounding=ROUND_CEILING))
@@ -158,13 +195,14 @@ def cost_micro(pricing, incoming, outgoing, cached=0, cache_write=0):
 def reservation_cost(options, incoming, outgoing):
     # No cache-hit assumption. New Claude requests can write a 5-minute prefix at 1.25x.
     factor = Decimal('1.25') if options.get('contract', {}).get('prompt_cache') else Decimal(1)
-    return int((Decimal(options['pricing']['input']) * incoming * factor + Decimal(options['pricing']['output']) * outgoing).to_integral_value(rounding=ROUND_CEILING))
+    rates = rates_for(options['pricing'], incoming)
+    return int((Decimal(rates['input']) * incoming * factor + Decimal(rates['output']) * outgoing).to_integral_value(rounding=ROUND_CEILING))
 
 
 def usage_cost(options, usage):
     if not options.get('contract', {}).get('prompt_cache'):
         return cost_micro(options['pricing'], usage['input'], usage['output'], usage['cached'], usage['cache_write'])
-    rates = options['pricing']
+    rates = rates_for(options['pricing'], usage['input'] + usage['cached'] + usage['cache_write'])
     return int((Decimal(rates['input']) * (usage['input'] + Decimal('1.25') * usage['cache_write']) +
                 Decimal(rates['output']) * usage['output'] + Decimal(rates['cached']) * usage['cached']).to_integral_value(rounding=ROUND_CEILING))
 
@@ -225,9 +263,11 @@ class ProviderClient:
                 system = [{'type': 'text', 'text': system + '\n분류 목록:\n' + encode(taxonomy),
                            'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
                 payload = encode({'tracks': inputs})
+            output = {'format': {'type': 'json_schema', 'schema': schema}}
+            if model == 'claude-haiku-5-5':
+                output['effort'] = 'low'
             return dict(model=model, max_tokens=max_tokens, system=system,
-                        messages=[{'role': 'user', 'content': payload}],
-                        output_config={'format': {'type': 'json_schema', 'schema': schema}})
+                        messages=[{'role': 'user', 'content': payload}], output_config=output)
         return dict(model=model, max_output_tokens=max_tokens, store=False, instructions=system,
                     input=payload, text={'format': {'type': 'json_schema', 'name': 'music_classification',
                                                                   'strict': True, 'schema': schema}})

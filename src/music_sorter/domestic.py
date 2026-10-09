@@ -350,6 +350,8 @@ class DomesticLookup:
         query = clean(track['artist'] + ' ' + track['title'], 500)
         def collect(site, search, parameter='q'):
             try:
+                if self.control:
+                    self.control.report(f'{SITES[site]} 검색 중…')
                 candidates, _ = self.page(search + urlencode({parameter: query}), refresh)
                 # First filter search rows, then verify the real detail page. Ranking is never a match rule.
                 candidates = [c for c in candidates if matches(track, c, self.settings.duplicate_tolerance_seconds)[0]]
@@ -358,6 +360,8 @@ class DomesticLookup:
                     return
                 for candidate in candidates:
                     try:
+                        if self.control:
+                            self.control.report(f'{SITES[site]} 곡 상세 확인 중…')
                         sources.append(self.source(track, candidate['url'], refresh))
                     except ValueError as error:
                         failures.append(dict(site=site, reason=str(error)))
@@ -374,6 +378,8 @@ class DomesticLookup:
                 sources.append(self.source(track, url, refresh))
             except ValueError as error:
                 failures.append(dict(site=canonical_url(url)[0], reason=str(error)))
+        if self.control:
+            self.control.report(f'출처 정보 대조 중 · 확인한 상세 {len(sources)}개')
         result = compare(track, sources, failures)
         result['extra_urls'] = urls
         stamp = now()

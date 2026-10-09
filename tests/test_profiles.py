@@ -23,7 +23,7 @@ def test_no_interpolation_or_execution_and_literal_windows_path(tmp_path):
     assert values['CLASSIFY_MODEL'] == '$(echo secret)'
 
 
-@pytest.mark.parametrize('text', ['NOT_A_LINE', 'UI_THEME="unfinished', 'UI_FONT_SCALE=garbage', 'SCAN_INCLUDE_SUBFOLDERS=yes', 'LLM_JOB_BUDGET_USD=NaN', 'LLM_EXECUTION_MODE=automatic', 'PLAYLIST_FORMAT=cp949'])
+@pytest.mark.parametrize('text', ['NOT_A_LINE', 'UI_THEME="unfinished', 'UI_FONT_SCALE=garbage', 'SCAN_INCLUDE_SUBFOLDERS=yes', 'LLM_EXECUTION_MODE=automatic', 'PLAYLIST_FORMAT=cp949'])
 def test_bad_profile_rejected_without_echoing_value(tmp_path, text):
     path = tmp_path / '.env'
     path.write_text(text, 'utf-8')

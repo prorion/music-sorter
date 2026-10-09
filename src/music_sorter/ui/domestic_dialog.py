@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdi
 
 from ..domestic import DomesticLookup, SITES, STATES, canonical_url
 from .operations import OperationWorker
+from .workflow import LiveStatus
 
 
 class DomesticReviewDialog(QDialog):
@@ -68,9 +69,7 @@ class DomesticReviewDialog(QDialog):
         layout.addWidget(self.add_form)
         self.add_form.setVisible(False)
         self.add_toggle.toggled.connect(self.add_form.setVisible)
-        self.status = QLabel()
-        self.status.setTextFormat(Qt.TextFormat.PlainText)
-        self.status.setWordWrap(True)
+        self.status = LiveStatus()
         layout.addWidget(self.status)
         note = QLabel('검색·대조는 프로그램이 수행하며 AI 비용이 들지 않습니다. 사이트 수는 독립적인 원자료 수나 정답 확률이 아닙니다.\n곡 정보와 앨범 정보의 범위를 구분합니다. 조회만으로 현재 분류·음악 파일을 변경하지 않습니다.')
         note.setWordWrap(True)
@@ -163,6 +162,7 @@ class DomesticReviewDialog(QDialog):
         self.status.setText('공개 곡 정보를 조회하고 항목별로 대조하는 중입니다…')
         self.worker.result.connect(self.received)
         self.worker.error.connect(self.status.setText)
+        self.worker.message.connect(self.status.setText)
         self.worker.finished.connect(self.worker_finished)
         self.worker.start()
 

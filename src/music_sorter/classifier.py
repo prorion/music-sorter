@@ -1,4 +1,4 @@
-"""Durable, budgeted classification. Preparing a job never sends a request."""
+"""Durable classification with usage records. Preparing never sends a request."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ from .database import encode, now
 from .llm import PROMPT_VERSION, SYSTEM, ProviderError, cache_key, cost_micro, input_bound, parse_tracks, price, response_schema, track_input
 from .classification import TAXONOMY
 from .tag_io import digest
-from .llm import reservation_cost, usage_cost
+from .llm import output_limit, reservation_cost, usage_cost
 
 
 PURPOSES = {'classify', 'escalate', 'reclassify'}
@@ -60,7 +60,7 @@ class Classifier:
     def __init__(self, library):
         self.library = library
 
-    def prepare(self, ids, *, provider, model, budget, purpose='classify', execution='sync',
+    def prepare(self, ids, *, provider, model, budget=None, purpose='classify', execution='sync',
                 include_lyrics=False, workspace='', external=None, control=None, progress=None,
                 tracks_per_request=20, max_output_tokens_per_track=1000, timeout_seconds=60, max_retries=3):
         if purpose not in PURPOSES or execution not in {'sync', 'batch'}:
@@ -68,7 +68,8 @@ class Classifier:
         if include_lyrics and purpose != 'escalate':
             raise ValueError('가사는 미확정 재판정 단계에서만 사용할 수 있습니다.')
         pricing = price(provider, model, execution)
-        budget = budget_micro(budget)
+        # Legacy callers may pass budget; it is no longer a submission limit.
+        budget = 0
         for value, low, high in [(tracks_per_request, 1, 20), (max_output_tokens_per_track, 256, 2000), (timeout_seconds, 10, 180), (max_retries, 0, 3)]:
             if type(value) is not int or not low <= value <= high:
                 raise ValueError('요청 묶음·출력 제한·시간·재시도 범위를 확인하세요.')
@@ -78,7 +79,7 @@ class Classifier:
         from .catalog import active_catalog
         options['contract'] = dict(prompt_version=PROMPT_VERSION, system=SYSTEM, taxonomy=active_catalog(), schema=response_schema(), prompt_cache=provider == 'anthropic')
         job_id = self.library.start_job('llm')
-        self.library.job_state(job_id, 'prepared', '입력·예산 계획만 준비됨. 유료 제출 전입니다.')
+        self.library.job_state(job_id, 'prepared', '분류 입력 준비됨. 아직 제출하지 않았습니다.')
         with self.library.connection(write=True) as db:
             db.execute('INSERT INTO llm_jobs(id,options,budget) VALUES (?,?,?)', (job_id, encode(options), budget))
         count, blocked = 0, 0
@@ -109,6 +110,8 @@ class Classifier:
                 blocked += 1
                 continue
             inputs['id'] = track_id
+            if control:
+                control.report(f'분류 준비 중 · {count + 1:,}번째 곡 · {inputs["title"]} — {inputs["artist"]}')
             key = cache_key(provider, model, {'input': inputs, 'file_hash': track['hash']}, purpose)
             with self.library.connection(write=True) as db:
                 if db.execute('SELECT 1 FROM llm_targets WHERE track_id=? AND state IN (?,?,?,?,?) LIMIT 1', (track_id, *ACTIVE)).fetchone():
@@ -147,26 +150,15 @@ class Classifier:
         estimate = 0
         rows = self.rows(job_id, 'prepared', item['options'].get('tracks_per_request', 20))
         if rows:
-            bound = reservation_cost(item['options'], input_bound([json.loads(row['input']) for row in rows]), len(rows) * item['options']['max_tokens_per_track'])
+            bound = reservation_cost(item['options'], input_bound([json.loads(row['input']) for row in rows]), output_limit(item['options'], len(rows)))
             estimate = (sum(counts.values()) + len(rows) - 1) // len(rows) * bound
         item['reservation_estimate'] = estimate
         return item
-
-    def increase_budget(self, job_id, value):
-        amount = budget_micro(value)
-        with self.library.connection(write=True) as db:
-            row = db.execute('SELECT actual,reserved FROM llm_jobs WHERE id=?', (job_id,)).fetchone()
-            if not row or amount < row['actual'] + row['reserved']:
-                raise ValueError('집계 비용과 미완료 예약보다 낮은 예산은 설정할 수 없습니다.')
-            db.execute('UPDATE llm_jobs SET budget=? WHERE id=?', (amount, job_id))
 
     def _reserve(self, job_id, rows, amount):
         request_id = uuid4().hex
         ids = [row['track_id'] for row in rows]
         with self.library.connection(write=True) as db:
-            job = db.execute('SELECT * FROM llm_jobs WHERE id=?', (job_id,)).fetchone()
-            if job['actual'] + job['reserved'] + amount > job['budget']:
-                return None
             # Global per-library active-target check and reservation happen under one write lock.
             for row in rows:
                 target = db.execute('SELECT state FROM llm_targets WHERE sequence=?', (row['sequence'],)).fetchone()
@@ -337,8 +329,6 @@ class Classifier:
         client.contract = options.get('contract')
         if options['execution'] != 'batch' or client.provider != options['provider']:
             raise ValueError('Batch 작업의 서비스·방식이 일치하지 않습니다.')
-        if price(options['provider'], options['model'], 'batch') != options['pricing']:
-            raise ValueError('단가가 변경되었습니다. 새 계획이 필요합니다.')
         requests = []
         while len(requests) < 50 and (rows := self.rows(job_id, 'prepared', options.get('tracks_per_request', 20))):
             rows = self._ready_rows(job_id, rows)
@@ -348,23 +338,28 @@ class Classifier:
                 if control:
                     control.checkpoint()
                 inputs = [json.loads(row['input']) for row in rows]
+                if control:
+                    control.report(f'서버 처리 요청 준비 중 · {len(requests) + 1}번째 묶음 · {len(inputs)}곡 입력 확인')
                 tokens = client.count_tokens(options['model'], inputs)
                 if tokens > 190000:
-                    raise ValueError('문맥·가격 구간 제한. 더 작은 묶음이 필요합니다.')
+                    raise ValueError('입력 길이 제한. 더 작은 묶음이 필요합니다.')
             except (InterruptedError, ProviderError):
                 break
-            amount = reservation_cost(options, tokens, len(rows) * options['max_tokens_per_track'])
+            amount = reservation_cost(options, tokens, output_limit(options, len(rows)))
             request_id = self._reserve(job_id, rows, amount)
-            if request_id is None:
-                break
-            requests.append({'id': request_id, 'body': client.body(options['model'], inputs, len(rows) * options['max_tokens_per_track'])})
+            requests.append({'id': request_id, 'body': client.body(options['model'], inputs, output_limit(options, len(rows)))})
         if not requests:
-            self.library.job_state(job_id, 'paused', '미제출. 대상·입력 계량·예산을 확인하세요.')
+            self.library.job_state(job_id, 'paused', '미제출. 대상·입력 계량을 확인하세요.')
             return self.summary(job_id)
         try:
+            if control:
+                control.checkpoint()
+                control.report(f'AI 서비스에 전달 중 · {len(requests)}개 묶음 · 서버 응답 대기…')
             upload_id = client.upload_batch(requests)
             with self.library.connection(write=True) as db:
                 db.executemany('UPDATE llm_requests SET upload_id=? WHERE id=?', [(upload_id, r['id']) for r in requests])
+            if control:
+                control.checkpoint()
             remote_id = client.submit_batch(requests, upload_id, job_id)
             if not isinstance(remote_id, str) or not remote_id:
                 raise ProviderError('unknown')
@@ -373,6 +368,10 @@ class Classifier:
                 for request in requests:
                     db.execute("UPDATE llm_targets SET state='remote' WHERE job_id=? AND track_id IN (SELECT value FROM json_each((SELECT target_ids FROM llm_requests WHERE id=?)))", (job_id, request['id']))
             self.library.job_state(job_id, 'paused', '원격 Batch 제출됨. 종료 후에도 처리될 수 있습니다. 상태 확인으로 수집하세요.')
+        except InterruptedError:
+            for request in requests:
+                self._fail(request['id'], 'cancelled')
+            self.library.job_state(job_id, 'cancelled', '서버에 제출하기 전에 중단했습니다.')
         except ProviderError as error:
             # An upload failure is not generation, but uncertain creation can have accepted work.
             for request in requests:
@@ -386,6 +385,9 @@ class Classifier:
         with self.library.connection() as db:
             remotes = [row[0] for row in db.execute("SELECT DISTINCT remote_id FROM llm_requests WHERE job_id=? AND state='remote'", (job_id,))]
         for remote_id in remotes:
+            if control:
+                control.checkpoint()
+                control.report('AI 서비스에서 진행 상황·결과 가져오는 중…')
             status, files = client.batch_status(remote_id)
             if status not in {'ended', 'completed', 'failed', 'expired', 'cancelled'}:
                 continue
@@ -438,11 +440,10 @@ class Classifier:
             raise ValueError('Batch 작업은 원격 제출·결과 확인 절차를 사용하세요.')
         if client.provider != options['provider']:
             raise ValueError('작업 시작 시 API 서비스와 일치하지 않습니다.')
-        if price(options['provider'], options['model'], options['execution']) != options['pricing']:
-            raise ValueError('단가가 변경되었습니다. 새 계획을 검토하세요.')
         self.apply_received(job_id)
         self.library.job_state(job_id, 'running')
         completed = failed = 0
+        total = sum(self.summary(job_id)['counts'].values())
         while rows := self.rows(job_id, 'prepared', options.get('tracks_per_request', 20)):
             try:
                 if control:
@@ -466,17 +467,16 @@ class Classifier:
                 continue
             inputs = [json.loads(row['input']) for row in uncached]
             try:
+                if control:
+                    control.report(f'{total:,}곡 중 {completed:,}곡 처리 · 다음 {len(inputs)}곡 입력 확인 중…')
                 tokens = client.count_tokens(options['model'], inputs)
                 if tokens > 190000:
-                    raise ValueError('문맥·가격 구간 제한. 더 작은 묶음이 필요합니다.')
+                    raise ValueError('입력 길이 제한. 더 작은 묶음이 필요합니다.')
             except ProviderError as error:
                 self.library.job_state(job_id, 'paused', '입력 계량 실패: ' + str(error))
                 break
-            reservation = reservation_cost(options, tokens, len(uncached) * options['max_tokens_per_track'])
+            reservation = reservation_cost(options, tokens, output_limit(options, len(uncached)))
             request_id = self._reserve(job_id, uncached, reservation)
-            if request_id is None:
-                self.library.job_state(job_id, 'paused', '예산 상한. 예산을 변경한 후 명시적으로 재개하세요.')
-                break
             response = None
             with self.library.connection() as db:
                 previous_attempts = max((db.execute('SELECT coalesce(sum(attempts),0) FROM llm_requests,json_each(llm_requests.target_ids) WHERE job_id=? AND json_each.value=? AND llm_requests.id!=?',
@@ -486,7 +486,13 @@ class Classifier:
                 with self.library.connection(write=True) as db:
                     db.execute('UPDATE llm_requests SET attempts=attempts+1 WHERE id=?', (request_id,))
                 try:
-                    response = client.generate(options['model'], inputs, len(uncached) * options['max_tokens_per_track'])
+                    if control:
+                        control.checkpoint()
+                        control.report(f'{total:,}곡 중 {completed:,}곡 처리 · {len(inputs)}곡 AI 응답 대기…' +
+                                       (f' · 재시도 {attempt}' if attempt else ''))
+                    response = client.generate(options['model'], inputs, output_limit(options, len(uncached)))
+                    break
+                except InterruptedError:
                     break
                 except ProviderError as error:
                     if error.category == 'retryable' and attempt + previous_attempts < max_attempts - 1:
@@ -503,6 +509,8 @@ class Classifier:
                     still_sending = db.execute('SELECT state FROM llm_requests WHERE id=?', (request_id,)).fetchone()[0] == 'sending'
                 if still_sending:
                     self._fail(request_id, 'retryable')
+                if control and control.cancelled.is_set():
+                    self.library.job_state(job_id, 'cancelled', '사용자가 중단했습니다. 이미 받은 결과는 유지합니다.')
                 break
             self._settle(request_id, response)
             self.apply_received(job_id)

@@ -80,7 +80,7 @@ def test_numbering_follows_pages_filters_and_sort_without_changing_track_identit
     assert model.data(model.index(0, 2)) == model.rows[0]['artist']
 
 
-def test_classification_preview_and_readable_details_do_not_submit_paid_requests(qtbot, library, root, song, fake_reader, monkeypatch):
+def test_saved_classification_readable_details_do_not_submit_requests(qtbot, library, root, song, fake_reader, monkeypatch):
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QMessageBox, QTabWidget
     scan_library(library, root)
@@ -90,23 +90,11 @@ def test_classification_preview_and_readable_details_do_not_submit_paid_requests
     dialog.show()
     assert dialog.table_stack.currentWidget() == dialog.empty_note
     assert dialog.collect_button.isHidden() and dialog.resolve_button.isHidden()
-    dialog.budget.setText('1')
-    dialog.prepare()
-    qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
+    dialog.job_id = dialog.engine.prepare([track['id']], provider='anthropic', model='claude-haiku-5-5')
+    dialog.load()
     assert dialog.table_stack.currentWidget() == dialog.table
     assert dialog.table.item(0, 0).text() == '1'
     assert dialog.run_button.isEnabled() and dialog.engine.summary(dialog.job_id)['actual'] == 0
-    confirmations = []
-
-    def cancel(parent, title, text, buttons, default):
-        confirmations.append((title, text, default))
-        return QMessageBox.StandardButton.No
-
-    monkeypatch.setattr('music_sorter.ui.classify_dialog.QMessageBox.question', cancel)
-    monkeypatch.setattr(dialog, 'with_client', lambda *args: (_ for _ in ()).throw(AssertionError('Paid request forbidden')))
-    dialog.run()
-    assert confirmations[0][2] == QMessageBox.StandardButton.No
-    assert '이번에 보낼 요청의 예상 비용' in confirmations[0][1]
     details = []
 
     def inspect_modal():

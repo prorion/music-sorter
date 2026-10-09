@@ -8,7 +8,7 @@ from ..external import ExternalLookup
 from ..settings import CredentialStore
 from .operations import OperationWorker
 from .wording import PROVIDERS, readable
-from .workflow import task_guide
+from .workflow import LiveStatus, task_guide
 
 
 class ExternalDialog(QDialog):
@@ -26,7 +26,7 @@ class ExternalDialog(QDialog):
         note = QLabel('멜론·벅스의 공개 곡 정보를 검색하고 출처별 장르를 대조합니다. MusicBrainz·Last.fm 정보도 함께 찾습니다.\n검색·대조에는 AI 비용이 들지 않습니다. 이 조회만으로 기존 분류나 음악 파일이 바뀌지는 않습니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
-        task_guide(layout, '대상 선택 → 조회 시작 → 결과를 두 번 클릭해 출처 확인. 이후 메인 3번에서 AI 분류를 진행하세요.')
+        task_guide(layout, '대상 선택 → 실행 → 결과를 두 번 클릭해 출처 확인. 이후 메인 3번에서 AI 분류를 진행하세요.')
         form = QHBoxLayout()
         self.scope = QComboBox()
         for title, value in ((f'선택한 {len(selected)}곡', 'selected'), ('검색·필터 전체', 'filtered'), ('라이브러리 전체', 'all')):
@@ -56,11 +56,10 @@ class ExternalDialog(QDialog):
         pages.addStretch()
         pages.addWidget(self.next)
         layout.addLayout(pages)
-        self.status = QLabel('국내 검색은 별도 키 없이 사용할 수 있습니다. 전송 정보: 제목·아티스트 검색어. MusicBrainz·Last.fm은 설정이 필요합니다.')
-        self.status.setWordWrap(True)
+        self.status = LiveStatus('대기 중 · 대상을 선택하고 「실행」을 누르세요. 국내 검색은 별도 키가 필요 없습니다.')
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
-        self.start_button = QPushButton('조회 시작')
+        self.start_button = QPushButton('실행')
         self.start_button.setProperty('primary', True)
         self.start_button.clicked.connect(self.start)
         self.stop = QPushButton('조회 중단')
@@ -200,15 +199,19 @@ class ExternalDialog(QDialog):
             count = failed = 0
             samples = []
             try:
-                for track_id in ids:
+                for index, track_id in enumerate(ids, 1):
                     control.checkpoint()
                     track = self.library.track(track_id)
+                    song_name = ' '.join((track['title'] + ' — ' + track['artist']).split())
+                    # Nested domestic phases reuse the same line with current song context.
+                    control.status = lambda stage, i=index, song=song_name: self.worker.message.emit(f'{len(ids):,}곡 중 {i:,}번째 · {song} · {stage}')
                     if track['file_state'] != 'ready':
                         failed += 1
                         continue
                     services = ('domestic', 'musicbrainz', 'lastfm') if self.settings.domestic_enabled else ('musicbrainz', 'lastfm')
                     for service in services:
                         control.checkpoint()
+                        control.report(f'{PROVIDERS.get(service, service)} 조회 중…')
                         try:
                             result = lookup.lookup(track, service, force)
                         except ValueError as error:
@@ -231,12 +234,15 @@ class ExternalDialog(QDialog):
         self.worker.result.connect(self.result)
         self.worker.error.connect(self.status.setText)
         self.worker.progress.connect(lambda count, failed: self.status.setText(f'조회 {count:,}곡 · 오류 {failed:,}'))
+        self.worker.message.connect(self.status.setText)
         self.worker.finished.connect(self.worker_finished)
         self.worker.start()
+        self.status.setText(f'조회 시작 · 대상 {len(ids):,}곡 · 검색 준비 중…')
 
     def result(self, result):
         rows, count, failed = result
-        self.status.setText(f'조회 {count:,}곡 · 오류 {failed:,} · 찾은 정보를 곡별로 확인할 수 있습니다.')
+        stopped = self.worker.control.cancelled.is_set()
+        self.status.setText(f'{"조회 중단" if stopped else "조회 완료"} · {count:,}곡 처리 · 오류 {failed:,} · 결과를 두 번 클릭해 확인하세요.')
 
     def worker_finished(self):
         worker, self.worker = self.worker, None

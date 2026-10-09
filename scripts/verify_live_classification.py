@@ -111,6 +111,8 @@ def main():
     parser.add_argument('--source-db', type=Path)
     parser.add_argument('--phase', choices=['start', 'submit', 'collect', 'cancel', 'cancel-recheck', 'recheck-local'], required=True)
     args = parser.parse_args()
+    if args.phase in {'start', 'submit'}:
+        raise ValueError('이 스크립트는 과거 예산 제한 검증용입니다. 새 유료 제출은 지원하지 않습니다. 기존 결과 수집·확인만 가능합니다.')
     output = args.output.resolve()
     if args.budget != Decimal('5'):
         raise ValueError('이 검증의 승인 상한은 US$5입니다.')

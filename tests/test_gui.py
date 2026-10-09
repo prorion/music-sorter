@@ -268,18 +268,17 @@ def test_mood_concept_filters_and_rejected_filter_keep_draft(qtbot, library, roo
     window.discard_edits()
 
 
-def test_classification_plan_requires_budget_has_no_generation_and_locks_options(qtbot, library, root, song, fake_reader):
+def test_saved_classification_job_locks_options_and_can_resume_without_budget(qtbot, library, root, song, fake_reader):
     from music_sorter.ui.classify_dialog import ClassifyDialog
+    from music_sorter.classifier import Classifier
     scan_library(library, root)
     track = library.list_tracks()[0][0]
-    dialog = ClassifyDialog(library, Settings(music_root=str(root)), [track['id']], {})
+    job = Classifier(library).prepare([track['id']], provider='anthropic', model='claude-haiku-5-5')
+    dialog = ClassifyDialog(library, Settings(music_root=str(root)), [track['id']], {}, job_id=job)
     qtbot.addWidget(dialog)
     dialog.show()
-    dialog.budget.setText('1')
-    dialog.prepare()
-    qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
     assert dialog.job_id and dialog.engine.summary(dialog.job_id)['counts'] == {'prepared': 1}
-    assert not dialog.purpose.isEnabled() and dialog.budget.isEnabled() and dialog.run_button.isEnabled()
+    assert not dialog.purpose.isEnabled() and not hasattr(dialog, 'budget') and dialog.run_button.isEnabled()
     assert dialog.engine.summary(dialog.job_id)['actual'] == 0
     assert not dialog.collect_button.isEnabled()
 

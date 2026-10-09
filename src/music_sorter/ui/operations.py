@@ -14,14 +14,18 @@ class OperationWorker(QThread):
     result = Signal(object)
     error = Signal(str)
     progress = Signal(int, int)
+    message = Signal(str)
 
     def __init__(self, action, parent=None):
         super().__init__(parent)
         self.action, self.control = action, ScanControl()
+        self.control.status = self.message.emit
 
     def run(self):
         try:
             self.result.emit(self.action(self.control, lambda a, b: self.progress.emit(a, b)))
+        except InterruptedError:
+            self.error.emit('작업을 중단했습니다. 이미 완료한 결과는 유지합니다.')
         except (ValueError, OSError, ProviderError) as error:
             self.error.emit(str(error) if isinstance(error, (ValueError, ProviderError)) else '파일 접근 실패. 작업 기록과 경로를 확인하세요.')
         except Exception:

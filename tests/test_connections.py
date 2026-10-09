@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox
 
-from music_sorter.connections import ConnectionError, ConnectionResult, Model, NoRedirect, list_models
+from music_sorter.connections import ConnectionError, ConnectionResult, Model, NoRedirect, get_model, list_models
 from music_sorter.settings import Settings
 from music_sorter.ui.settings_dialog import SettingsDialog
 
@@ -106,6 +106,29 @@ def test_invalid_header_never_sends_a_request():
     assert not transport.requests
 
 
+def test_selected_model_get_resolves_alias_and_reports_features_without_generation():
+    transport = Transport({'id': 'claude-haiku-4-5-20251001', 'display_name': 'Claude Haiku 4.5',
+                           'capabilities': {'structured_outputs': {'supported': True}, 'batch': {'supported': False}},
+                           'lifecycle': 'active'})
+    model = get_model('anthropic', 'offline-test-key', 'claude-haiku-4-5', opener=transport)
+    request, _ = transport.requests[0]
+    assert request.full_url == 'https://api.anthropic.com/v1/models/claude-haiku-4-5'
+    assert request.get_method() == 'GET' and request.data is None
+    assert model.id == 'claude-haiku-4-5-20251001' and model.capabilities == {'structured_outputs': True, 'batch': False}
+
+
+def test_selected_model_rejects_url_injection_and_sanitizes_not_found():
+    transport = Transport()
+    for model in ('../messages', 'x?key=offline-test-key', 'model\nheader', ''):
+        with pytest.raises(ConnectionError, match='모델 ID'):
+            get_model('openai', 'offline-test-key', model, opener=transport)
+    assert not transport.requests
+    error = HTTPError('https://api.openai.com/v1/models/missing', 404, 'offline-test-key', {}, Response(b'offline-test-key'))
+    with pytest.raises(ConnectionError) as caught:
+        get_model('openai', 'offline-test-key', 'missing', opener=Transport(error))
+    assert 'offline-test-key' not in str(caught.value)
+
+
 def test_total_deadline_and_max_pages(monkeypatch):
     ticks = iter([0, 0, 0, 31])
     monkeypatch.setattr("music_sorter.connections.time.monotonic", lambda: next(ticks))
@@ -166,9 +189,9 @@ def test_threaded_connection_keeps_ui_responsive_and_guards_close(qtbot, library
         release.set()
         qtbot.waitUntil(lambda: dialog.connection_worker is None)
     assert dialog.key_states["anthropic"].text() == "연결 확인됨"
-    assert dialog.models[0].count() == 1
+    assert dialog.models[0].count() == 2
     assert dialog.models[0].currentText() == original
-    dialog.models[0].setCurrentIndex(0)
+    dialog.models[0].setCurrentIndex(dialog.models[0].findData('model-a'))
     assert dialog.save()
     saved = Settings.load(tmp_path / "settings.json")
     assert saved.classify_model == "model-a"
@@ -176,7 +199,7 @@ def test_threaded_connection_keeps_ui_responsive_and_guards_close(qtbot, library
     dialog.key_edits["anthropic"].setText("replacement-test-key")
     dialog.save_key("anthropic")
     assert dialog.key_states["anthropic"].text() == "등록됨 · 미확인"
-    assert dialog.models[0].count() == 0
+    assert dialog.models[0].count() == 4
     assert dialog.models[0].currentText() == "model-a"
 
 

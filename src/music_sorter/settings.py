@@ -70,9 +70,9 @@ class Settings:
     scan_exclude_folders: list[str] = field(default_factory=list)
     notify_on_completion: bool = True
     classify_provider: str = "anthropic"
-    classify_model: str = "claude-haiku-4-5"
+    classify_model: str = "claude-haiku-5-5"
     escalate_provider: str = "anthropic"
-    escalate_model: str = "claude-sonnet-5-5"
+    escalate_model: str = "claude-haiku-5-5"
     anthropic_workspace_id: str = ""
     duplicate_tolerance_seconds: float = 3.0
     musicbrainz_enabled: bool = True

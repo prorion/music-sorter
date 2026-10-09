@@ -50,8 +50,7 @@ def test_empty_classification_plan_returns_to_editable_options_without_submittin
     library.save_manual(track['id'], dict(major='가요', subgenre=['발라드'], vocal='보컬', mood=['잔잔한'], concept=['새벽']), track['revision'])
     dialog = ClassifyDialog(library, Settings(music_root=str(root)), [track['id']], {})
     qtbot.addWidget(dialog)
-    dialog.budget.setText('1')
-    dialog.prepare()
+    dialog.run()
     qtbot.waitUntil(lambda: dialog.worker is None, timeout=10000)
     saved_job = dialog.job_id
     assert not dialog.engine.summary(saved_job)['counts'] and not dialog.new_plan_button.isHidden()
@@ -124,7 +123,7 @@ def test_lookup_dialog_has_one_start_and_no_implicit_enter_action(qtbot, qapp, l
     dialog = ExternalDialog(library, Settings(), [], {})
     qtbot.addWidget(dialog)
     dialog.show()
-    assert dialog.start_button.text() == '조회 시작' and dialog.stop.isHidden()
+    assert dialog.start_button.text() == '실행' and dialog.stop.isHidden()
     assert not any(button.autoDefault() or button.isDefault() for button in dialog.findChildren(QPushButton))
     qtbot.keyClick(dialog, Qt.Key.Key_Return)
     assert dialog.worker is None and not library.jobs()

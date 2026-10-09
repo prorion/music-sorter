@@ -48,14 +48,16 @@ def test_budget_reservation_completion_and_no_paid_prepare(library, root, song, 
     assert client.calls == 1
 
 
-def test_budget_blocks_before_paid_request(library, root, song, fake_reader):
+def test_legacy_budget_does_not_block_and_no_budget_is_required(library, root, song, fake_reader):
     engine, job, _ = prepared(library, root, song, fake_reader, budget='.001')
     client = Client()
     result = engine.run(job, client)
-    assert result['counts'] == {'prepared': 1} and result['actual'] == 0 and client.calls == 0
-    engine.increase_budget(job, '1')
-    engine.run(job, client)
-    assert client.calls == 1
+    assert result['counts'] == {'completed': 1} and result['actual'] == 2600 and client.calls == 1
+    assert result['budget'] == 0
+    newer = engine.prepare([r['id'] for r in library.list_tracks()[0]], provider='anthropic', model='claude-haiku-5-5', purpose='reclassify')
+    with library.connection(write=True) as db:
+        db.execute('UPDATE llm_jobs SET budget=1 WHERE id=?', (newer,))
+    assert engine.run(newer, Client())['counts'] == {'completed': 1}
 
 
 def test_file_change_before_submission_sends_nothing(library, root, song, fake_reader):
@@ -199,12 +201,12 @@ def test_received_crash_recovery_no_duplicate_charge(library, root, song, fake_r
     assert client.calls == 1 and fresh.summary(job)['actual'] == 2600
 
 
-def test_cancelled_prepare_and_no_invalid_budget_job(library, root, song, fake_reader):
+def test_cancelled_prepare_and_unsupported_model_creates_no_job(library, root, song, fake_reader):
     scan_library(library, root)
     engine = Classifier(library)
     before = len(library.jobs())
     with pytest.raises(ValueError):
-        engine.prepare([], provider='anthropic', model='claude-haiku-4-5', budget='NaN')
+        engine.prepare([], provider='anthropic', model='unsupported-model')
     assert len(library.jobs()) == before
     control = ScanControl()
     control.cancelled.set()
@@ -241,6 +243,30 @@ class BatchClient(Client):
                                       usage=dict(input=100, output=500, cached=0, cache_write=0))
     def cancel_batch(self, remote_id):
         self.cancelled = remote_id
+
+
+def test_stopping_during_batch_preparation_does_not_submit(library, root, song, fake_reader):
+    scan_library(library, root)
+    engine = Classifier(library)
+    job = engine.prepare([r['id'] for r in library.list_tracks()[0]], provider='anthropic', model='claude-haiku-5-5', execution='batch')
+    control = ScanControl()
+    client = BatchClient()
+    original = client.count_tokens
+
+    def count_tokens(model, inputs):
+        control.cancelled.set()
+        return original(model, inputs)
+
+    client.count_tokens = count_tokens
+    result = engine.submit_batch(job, client, control)
+    assert client.calls == 0 and not hasattr(client, 'requests')
+    assert result['counts'] == {'cancelled': 1} and result['actual'] == result['reserved'] == 0
+
+
+def test_saved_pricing_snapshot_does_not_block_resume_after_table_update(library, root, song, fake_reader, monkeypatch):
+    engine, job, _ = prepared(library, root, song, fake_reader)
+    monkeypatch.setattr('music_sorter.classifier.price', lambda *a: (_ for _ in ()).throw(AssertionError('Repricing should not block saved work')))
+    assert engine.run(job, Client())['counts'] == {'completed': 1}
 
 
 def test_batch_persist_collect_repeated_without_double_cost(library, root, song, fake_reader):

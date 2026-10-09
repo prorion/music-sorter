@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import ssl
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -19,6 +20,8 @@ class ConnectionError(ValueError):
 class Model:
     id: str
     name: str
+    capabilities: dict = field(default_factory=dict)
+    lifecycle: str = ''
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,7 @@ def http_error(status: int, provider: str) -> ConnectionError:
     return ConnectionError(messages.get(status, "API 요청 실패 · 계정과 연결 설정을 확인하세요."))
 
 
-def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None) -> ConnectionResult:
+def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None, _model_id=None) -> ConnectionResult:
     if provider not in {"openai", "anthropic"}:
         raise ConnectionError("지원하지 않는 서비스입니다.")
     key, workspace_id = key.strip(), workspace_id.strip()
@@ -56,6 +59,8 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
     for value in (key, workspace_id):
         if any(ord(char) < 33 or ord(char) > 126 for char in value):
             raise ConnectionError("입력 형식 오류 · 키와 워크스페이스 ID의 공백·줄바꿈을 확인하세요.")
+    if _model_id is not None and (not isinstance(_model_id, str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,256}', _model_id)):
+        raise ConnectionError('모델 ID 형식 오류 · 목록에서 모델을 다시 선택하세요.')
     headers = {"Accept": "application/json", "User-Agent": "music-sorter/0.3"}
     if provider == "openai":
         base = "https://api.openai.com/v1/models"
@@ -65,6 +70,8 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
         headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
         if workspace_id:
             headers["anthropic-workspace-id"] = workspace_id
+    if _model_id:
+        base += '/' + _model_id
     opener = opener or build_opener(NoRedirect())
     deadline = time.monotonic() + 30
     models, cursors = {}, set()
@@ -73,7 +80,7 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ConnectionError("응답 시간 초과 · 네트워크 상태를 확인하고 다시 시도하세요.")
-        query = {"limit": 1000} if provider == "anthropic" else {}
+        query = {"limit": 1000} if provider == "anthropic" and not _model_id else {}
         if cursor:
             query["after_id"] = cursor
         url = base + ("?" + urlencode(query) if query else "")
@@ -114,6 +121,8 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
             raise ConnectionError("네트워크 연결 실패 · 인터넷·프록시·방화벽 설정을 확인하세요.") from None
         if time.monotonic() > deadline:
             raise ConnectionError("응답 시간 초과 · 네트워크 상태를 확인하고 다시 시도하세요.")
+        if _model_id:
+            payload = {'data': [payload], 'has_more': False}
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             raise ConnectionError("응답 형식 오류 · 유효한 모델 목록을 받지 못했습니다.")
         for item in payload["data"]:
@@ -127,8 +136,21 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
                 raise ConnectionError("응답 형식 오류 · 모델 ID를 확인할 수 없습니다.")
             if key in model_id or key in name:
                 raise ConnectionError("응답 형식 오류 · 모델 ID를 확인할 수 없습니다.")
-            models[model_id] = Model(model_id, name)
-        if provider == "openai" or payload.get("has_more") is False:
+            capabilities = item.get('capabilities') or {}
+            if not isinstance(capabilities, dict):
+                raise ConnectionError('응답 형식 오류 · 모델 지원 기능을 확인할 수 없습니다.')
+            supported = {}
+            for feature in ('structured_outputs', 'batch'):
+                value = capabilities.get(feature)
+                if value is not None:
+                    if not isinstance(value, dict) or type(value.get('supported')) is not bool:
+                        raise ConnectionError('응답 형식 오류 · 모델 지원 기능을 확인할 수 없습니다.')
+                    supported[feature] = value['supported']
+            lifecycle = item.get('lifecycle', '')
+            if lifecycle not in {'', 'active', 'deprecated', 'retired'}:
+                lifecycle = ''
+            models[model_id] = Model(model_id, name, supported, lifecycle)
+        if _model_id or provider == "openai" or payload.get("has_more") is False:
             return ConnectionResult(tuple(sorted(models.values(), key=lambda model: model.id)))
         if payload.get("has_more") is not True:
             raise ConnectionError("응답 형식 오류 · 모델 목록 페이지를 확인할 수 없습니다.")
@@ -137,3 +159,7 @@ def list_models(provider: str, key: str, workspace_id: str = "", *, opener=None)
             raise ConnectionError("응답 형식 오류 · 모델 목록 페이지를 확인할 수 없습니다.")
         cursors.add(cursor)
     raise ConnectionError("조회 범위 초과 · 모델 목록을 완전히 조회하지 못했습니다.")
+
+
+def get_model(provider, key, model_id, workspace_id='', *, opener=None):
+    return list_models(provider, key, workspace_id, opener=opener, _model_id=model_id).models[0]
