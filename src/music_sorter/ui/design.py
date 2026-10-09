@@ -1,7 +1,7 @@
 """Code-native visual components without external assets."""
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QVBoxLayout
 
 
 def icon(name, color="#8796AB", size=22):
@@ -73,18 +73,17 @@ class StatCard(QFrame):
         super().__init__(parent)
         self.setObjectName("statCard")
         self.setProperty("tint", tint)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(4)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 9, 14, 9)
+        layout.setSpacing(8)
         title = QLabel(label)
         title.setObjectName("muted")
         self.value = QLabel("0")
         self.value.setObjectName("statValue")
-        subtitle = QLabel(hint)
-        subtitle.setObjectName("subtle")
         layout.addWidget(title)
+        layout.addStretch()
         layout.addWidget(self.value)
-        layout.addWidget(subtitle)
+        self.setToolTip(hint)
 
 
 class TrackDelegate(QStyledItemDelegate):

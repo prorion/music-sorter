@@ -83,7 +83,7 @@ class TrackEditor(QWidget):
         self.metadata.setObjectName("subtle")
         self.metadata.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.metadata)
-        self.fields, self.edits, self.protection = {}, {}, {}
+        self.fields, self.edits, self.protection, self.unlock_buttons = {}, {}, {}, {}
         for axis in AXES:
             row = QHBoxLayout()
             edit = QCheckBox(LABELS[axis] + " 수정")
@@ -94,6 +94,7 @@ class TrackEditor(QWidget):
             unlock.setObjectName("ghost")
             unlock.setToolTip("이 항목을 다음 AI 분류에서 수정할 수 있게 합니다. 지금 분류를 실행하지는 않습니다.")
             unlock.clicked.connect(lambda _, a=axis: self.unlock(a))
+            self.unlock_buttons[axis] = unlock
             row.addWidget(unlock)
             layout.addLayout(row)
             layout.addWidget(protection)
@@ -166,6 +167,7 @@ class TrackEditor(QWidget):
             status = {"unclassified": "미분류", "unresolved": "확인 필요", "confirmed": "확정"}[data["status"]]
             self.protection[axis].setText(f"{'🔒 직접 수정한 분류' if data['protected'] else 'AI 수정 가능'} · {status}")
             self.protection[axis].setToolTip(f"분류한 방법: {SOURCES.get(data['source'], data['source'] or '없음')}\n이유: {readable(data['reason'])}")
+            self.unlock_buttons[axis].setVisible(bool(data['protected']))
         self.save_button.setEnabled(track["file_state"] == "ready")
         self.review_button.setText("이전 곡 기록과 비교" if track["file_state"] == "link_pending" else "앱 밖에서 바뀐 파일 확인")
         self.review_button.setVisible(track["file_state"] in {"external_change", "link_pending"})

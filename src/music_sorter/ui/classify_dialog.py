@@ -10,6 +10,7 @@ from ..llm import ProviderClient
 from ..settings import CredentialStore
 from .operations import OperationWorker
 from .wording import EXECUTIONS, PROVIDERS, classification_detail, readable
+from .workflow import task_guide
 
 
 class ClassifyDialog(QDialog):
@@ -28,7 +29,8 @@ class ClassifyDialog(QDialog):
         note = QLabel('곡 정보를 AI에 보내 장르·분위기·컨셉을 분류합니다. 실행할 때 API 이용 요금이 발생합니다.\n분류 결과는 앱에 저장합니다. 음악 파일·앨범 이미지는 보내지 않으며 파일 이름이나 장르 정보도 바꾸지 않습니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
-        options_group = QGroupBox('1. 분류할 곡과 예산 선택')
+        task_guide(layout, '곡·예산 선택 → 예상 비용 확인 → 분류 시작(유료). 결과를 받은 뒤 메인 4번에서 검토하세요.')
+        options_group = QGroupBox('분류할 곡과 예산')
         form = QGridLayout(options_group)
         self.scope, self.purpose, self.execution = QComboBox(), QComboBox(), QComboBox()
         for text, value in ((f'선택한 {len(selected)}곡', 'selected'), ('검색 결과 전체', 'filtered'), ('등록된 모든 곡', 'all')):
@@ -65,7 +67,7 @@ class ClassifyDialog(QDialog):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.cellDoubleClicked.connect(self.inspect)
         self.table_stack = QStackedWidget()
-        self.empty_note = QLabel('2. AI에 보낼 정보와 예상 비용 확인\n\n위에서 곡과 예산을 선택한 뒤 아래의 「예상 비용 확인」을 누르세요.\n곡별로 보낼 정보와 처리 가능 여부를 확인할 수 있습니다.\n이 단계에서는 AI 분류를 요청하지 않습니다.')
+        self.empty_note = QLabel('AI에 보낼 정보와 예상 비용 확인\n\n곡과 예산을 선택하고 「예상 비용 확인」을 누르세요.\n이곳에 곡별 전송 정보와 처리 가능 여부가 표시됩니다.\n이 단계에서는 이용 요금이 발생하지 않습니다.')
         self.empty_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_note.setWordWrap(True)
         self.table_stack.addWidget(self.empty_note)
@@ -76,9 +78,9 @@ class ClassifyDialog(QDialog):
         self.previous.clicked.connect(lambda: self.turn_page(-1))
         self.next.clicked.connect(lambda: self.turn_page(1))
         pages.addWidget(self.previous)
-        self.abandon_button = QPushButton('아직 시작하지 않은 곡 취소')
+        self.abandon_button = QPushButton('계획 취소')
+        self.abandon_button.setToolTip('아직 AI에 보내지 않은 곡만 취소합니다. 이미 처리된 결과는 유지합니다.')
         self.abandon_button.clicked.connect(self.abandon)
-        pages.addWidget(self.abandon_button)
         self.resolve_button = QPushButton('처리·결제 여부 확인')
         self.resolve_button.setToolTip('결과를 받지 못한 요청의 처리·결제 여부를 AI 서비스에서 직접 확인한 뒤 예상 비용을 해제할 수 있습니다.')
         self.resolve_button.clicked.connect(self.resolve_unknown)
@@ -86,15 +88,17 @@ class ClassifyDialog(QDialog):
         pages.addStretch()
         pages.addWidget(self.next)
         layout.addLayout(pages)
-        self.status = QLabel('먼저 「예상 비용 확인」을 누르세요. 실제 분류는 「AI 분류 시작」에서 비용을 확인한 뒤 실행합니다.')
+        self.status = QLabel('먼저 「예상 비용 확인」을 누르세요. 실제 분류는 「분류 시작 (유료)」에서 비용을 확인한 뒤 실행합니다.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
-        self.prepare_button = QPushButton('2. 예상 비용 확인')
+        self.prepare_button = QPushButton('예상 비용 확인')
         self.prepare_button.clicked.connect(self.prepare)
-        self.run_button = QPushButton('3. AI 분류 시작 (유료)')
+        self.run_button = QPushButton('분류 시작 (유료)')
         self.run_button.setProperty('primary', True)
         self.run_button.clicked.connect(self.run)
+        self.new_plan_button = QPushButton('다른 곡·조건 선택')
+        self.new_plan_button.clicked.connect(self.new_plan)
         self.collect_button = QPushButton('진행 상황·결과 가져오기')
         self.collect_button.clicked.connect(lambda: self.remote('collect'))
         self.cancel_remote_button = QPushButton('서버에 처리 취소 요청')
@@ -105,9 +109,10 @@ class ClassifyDialog(QDialog):
         self.stop_button = QPushButton('현재 작업 멈추기')
         self.stop_button.setToolTip('이 앱의 작업을 멈춥니다. 이미 서버에 보낸 작업은 별도로 취소를 요청해야 합니다.')
         self.stop_button.clicked.connect(lambda: self.worker.control.cancelled.set() if self.worker else None)
-        close = QPushButton('닫기')
+        close = self.close_button = QPushButton('닫기')
         close.clicked.connect(self.reject)
-        for widget in (self.prepare_button, self.run_button, self.collect_button, close):
+        for widget in (self.prepare_button, self.run_button, self.new_plan_button, self.collect_button, self.abandon_button, close):
+            widget.setAutoDefault(False)
             buttons.addWidget(widget)
         layout.addLayout(buttons)
         controls = QHBoxLayout()
@@ -115,7 +120,7 @@ class ClassifyDialog(QDialog):
             controls.addWidget(widget)
         controls.addStretch()
         layout.addLayout(controls)
-        self.conditional_buttons = (self.run_button, self.collect_button, self.cancel_remote_button, self.retry_button, self.resolve_button)
+        self.conditional_buttons = (self.run_button, self.new_plan_button, self.collect_button, self.cancel_remote_button, self.retry_button, self.resolve_button)
         self.controls = (self.scope, self.purpose, self.execution, self.budget, self.lyrics, self.prepare_button)
         self.stop_button.setEnabled(False)
         self.purpose.currentIndexChanged.connect(self.model_changed)
@@ -198,7 +203,24 @@ class ClassifyDialog(QDialog):
     def prepared(self, job_id):
         self.job_id = job_id
         self.offset = 0
-        self.status.setText('예상 비용 확인 완료. 곡을 두 번 클릭하면 AI에 보낼 정보를 볼 수 있습니다. 확인 후 「AI 분류 시작」을 누르세요.')
+        self.status.setText('예상 비용 확인 완료. 곡을 두 번 클릭하면 AI에 보낼 정보를 볼 수 있습니다. 확인 후 「분류 시작 (유료)」를 누르세요.')
+        if not self.engine.summary(job_id)['counts']:
+            self.status.setText('선택한 조건에서 분류할 곡이 없습니다. 진행 중인 작업·분류 상태를 확인하거나 「다른 곡·조건 선택」을 누르세요.')
+
+    def new_plan(self):
+        if self.worker or not self.job_id:
+            return
+        counts = self.engine.summary(self.job_id)['counts']
+        if any(counts.get(state) for state in ('prepared', 'remote', 'unknown', 'sending', 'received')):
+            return
+        self.job_id = None
+        self.offset = 0
+        self.scope.blockSignals(True)
+        self.scope.setItemText(0, f'선택한 {len(self.selected)}곡')
+        self.scope.blockSignals(False)
+        self.load()
+        self.model_changed()
+        self.status.setText('새 대상과 조건을 선택하고 「예상 비용 확인」을 누르세요. 이전 작업 결과는 작업 기록에 남아 있습니다.')
 
     def start(self, action, callback=None):
         if self.worker:
@@ -207,6 +229,7 @@ class ClassifyDialog(QDialog):
         for widget in (*self.controls, *self.conditional_buttons, self.abandon_button, self.previous, self.next):
             widget.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.close_button.setEnabled(False)
         self.stop_button.show()
         self.worker.result.connect(callback or (lambda _: self.load()))
         self.worker.error.connect(lambda message: self.status.setText(readable(message)))
@@ -218,6 +241,7 @@ class ClassifyDialog(QDialog):
         worker, self.worker = self.worker, None
         worker.deleteLater()
         self.stop_button.setEnabled(False)
+        self.close_button.setEnabled(True)
         self.load()
 
     def with_client(self, action, control, progress):
@@ -315,6 +339,12 @@ class ClassifyDialog(QDialog):
                                 (self.next, self.offset + len(self.rows) < sum(counts.values()))):
             button.setVisible(bool(visible))
         self.stop_button.setVisible(bool(self.worker))
+        self.run_button.setVisible(bool(counts.get('prepared')))
+        can_restart = bool(self.job_id) and not any(counts.get(state) for state in ('prepared', 'remote', 'unknown', 'sending', 'received'))
+        self.new_plan_button.setVisible(can_restart)
+        self.new_plan_button.setEnabled(can_restart and not self.worker)
+        # Preparation belongs to the initial form; subsequent runs use the saved plan.
+        self.prepare_button.setVisible(not bool(self.job_id))
         self.prepare_button.setProperty('primary', not self.job_id)
         self.prepare_button.style().unpolish(self.prepare_button)
         self.prepare_button.style().polish(self.prepare_button)
@@ -410,11 +440,14 @@ class ClassifyDialog(QDialog):
         dialog.exec()
 
     def reject(self):
-        if not self.worker:
-            super().reject()
+        if self.worker:
+            self.status.setText('진행 중인 작업을 먼저 멈추고 완료를 기다려 주세요. 서버 처리 중인 작업은 별도로 취소를 요청해야 합니다.')
+            return
+        super().reject()
 
     def closeEvent(self, event):
         if self.worker:
+            self.reject()
             event.ignore()
         else:
             super().closeEvent(event)

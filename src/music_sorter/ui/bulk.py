@@ -149,7 +149,7 @@ class BulkDialog(QDialog):
         buttons = QHBoxLayout()
         self.preview_button = QPushButton("미리보기 만들기")
         self.preview_button.clicked.connect(self.start_preview)
-        self.apply_button = QPushButton("선택한 분류 저장")
+        self.apply_button = QPushButton("변경 내용 저장")
         self.apply_button.setProperty("primary", True)
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.start_apply)
@@ -221,6 +221,7 @@ class BulkDialog(QDialog):
         self.preview_button.setEnabled(False)
         self.apply_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.stop_button.setVisible(True)
         self.previous.setEnabled(False)
         self.next.setEnabled(False)
         self.status.setText("바뀔 분류를 확인하고 있습니다…" if mode == "preview" else "분류를 저장하고 있습니다…")
@@ -260,6 +261,14 @@ class BulkDialog(QDialog):
             super().reject()
 
     def load_page(self):
+        self.apply_button.setVisible(bool(self.preview))
+        self.stop_button.setVisible(self.stop_button.isEnabled())
+        self.preview_button.setVisible(self.form.isEnabled())
+        self.preview_button.setProperty('primary', not bool(self.preview))
+        self.preview_button.style().unpolish(self.preview_button)
+        self.preview_button.style().polish(self.preview_button)
+        self.previous.setVisible(False)
+        self.next.setVisible(False)
         if not self.preview:
             self.previous.setEnabled(False)
             self.next.setEnabled(False)
@@ -271,6 +280,8 @@ class BulkDialog(QDialog):
         running = bool(self.worker and self.worker.isRunning())
         self.previous.setEnabled(not running and self.offset > 0)
         self.next.setEnabled(not running and self.offset + len(rows) < total)
+        self.previous.setVisible(self.offset > 0)
+        self.next.setVisible(self.offset + len(rows) < total)
         self.page_label.setText(f"대상 {total:,}곡 · {self.offset + 1 if rows else 0}–{self.offset + len(rows)} 표시")
 
     def turn_page(self, direction):

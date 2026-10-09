@@ -8,6 +8,7 @@ from ..external import ExternalLookup
 from ..settings import CredentialStore
 from .operations import OperationWorker
 from .wording import PROVIDERS, readable
+from .workflow import task_guide
 
 
 class ExternalDialog(QDialog):
@@ -25,6 +26,7 @@ class ExternalDialog(QDialog):
         note = QLabel('멜론·벅스의 공개 곡 정보를 검색하고 출처별 장르를 대조합니다. MusicBrainz·Last.fm 정보도 함께 찾습니다.\n검색·대조에는 AI 비용이 들지 않습니다. 이 조회만으로 기존 분류나 음악 파일이 바뀌지는 않습니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
+        task_guide(layout, '대상 선택 → 조회 시작 → 결과를 두 번 클릭해 출처 확인. 이후 메인 3번에서 AI 분류를 진행하세요.')
         form = QHBoxLayout()
         self.scope = QComboBox()
         for title, value in ((f'선택한 {len(selected)}곡', 'selected'), ('검색·필터 전체', 'filtered'), ('라이브러리 전체', 'all')):
@@ -37,8 +39,12 @@ class ExternalDialog(QDialog):
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(['곡', '출처', '조회 결과'])
         self.table.setColumnWidth(0, 330)
+        self.table.setColumnWidth(1, 160)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(self.inspect)
         layout.addWidget(self.table, 1)
         pages = QHBoxLayout()
@@ -54,17 +60,17 @@ class ExternalDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
-        self.start_button = QPushButton('곡 정보 찾기')
+        self.start_button = QPushButton('조회 시작')
         self.start_button.setProperty('primary', True)
         self.start_button.clicked.connect(self.start)
-        self.details_button = QPushButton('선택한 조회 결과 보기')
-        self.details_button.clicked.connect(lambda: self.inspect(self.table.currentRow(), 0))
         self.stop = QPushButton('조회 중단')
         self.stop.setEnabled(False)
+        self.stop.setVisible(False)
         self.stop.clicked.connect(lambda: self.worker.control.cancelled.set() if self.worker else None)
-        close = QPushButton('닫기')
+        close = self.close_button = QPushButton('닫기')
         close.clicked.connect(self.reject)
-        for widget in (self.start_button, self.details_button, self.stop, close):
+        for widget in (self.start_button, self.stop, close):
+            widget.setAutoDefault(False)
             buttons.addWidget(widget)
         layout.addLayout(buttons)
         self.scope.currentIndexChanged.connect(self.scope_changed)
@@ -94,6 +100,8 @@ class ExternalDialog(QDialog):
                 self.table.setItem(i, j, item)
         self.previous.setEnabled(self.offset > 0 and not self.worker)
         self.next.setEnabled(self.offset + len(tracks) < total and not self.worker)
+        self.previous.setVisible(self.offset > 0)
+        self.next.setVisible(self.offset + len(tracks) < total)
         self.page_label.setText(f'{self.offset + 1 if tracks else 0}–{self.offset + len(tracks)} / {total:,}곡 · 두 번 클릭: 찾은 곡 비교·선택')
 
     def turn_page(self, delta):
@@ -216,9 +224,10 @@ class ExternalDialog(QDialog):
                 self.library.job_state(job, 'cancelled', f'조회 중단. 완료 캐시 {count}곡 보존')
             return samples, count, failed
         self.worker = OperationWorker(action, self)
-        for widget in (self.start_button, self.scope, self.force):
+        for widget in (self.start_button, self.scope, self.force, self.close_button):
             widget.setEnabled(False)
         self.stop.setEnabled(True)
+        self.stop.setVisible(True)
         self.worker.result.connect(self.result)
         self.worker.error.connect(self.status.setText)
         self.worker.progress.connect(lambda count, failed: self.status.setText(f'조회 {count:,}곡 · 오류 {failed:,}'))
@@ -232,17 +241,21 @@ class ExternalDialog(QDialog):
     def worker_finished(self):
         worker, self.worker = self.worker, None
         worker.deleteLater()
-        for widget in (self.start_button, self.scope, self.force):
+        for widget in (self.start_button, self.scope, self.force, self.close_button):
             widget.setEnabled(True)
         self.stop.setEnabled(False)
+        self.stop.setVisible(False)
         self.refresh()
 
     def reject(self):
-        if not self.worker:
-            super().reject()
+        if self.worker:
+            self.status.setText('조회 중입니다. 「조회 중단」을 누른 뒤 종료를 기다려 주세요.')
+            return
+        super().reject()
 
     def closeEvent(self, event):
         if self.worker:
+            self.reject()
             event.ignore()
         else:
             super().closeEvent(event)

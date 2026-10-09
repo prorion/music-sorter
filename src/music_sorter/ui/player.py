@@ -74,7 +74,7 @@ class Player(QFrame):
         self.volume.valueChanged.connect(lambda value: self.audio.setVolume(value / 100))
         volume_row.addWidget(self.volume)
         layout.addLayout(volume_row)
-        external = QPushButton("기본 음악 앱")
+        external = QPushButton("기본 앱으로 열기")
         external.setObjectName("ghost")
         external.clicked.connect(self.open_external)
         layout.addWidget(external)

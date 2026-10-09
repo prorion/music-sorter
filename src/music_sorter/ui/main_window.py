@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QAbstractTableModel, QItemSelectionModel, QModelIndex, QSize, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                              QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+                              QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
                               QScrollArea, QSplitter, QStackedWidget, QTableView, QTableWidget,
-                              QTableWidgetItem, QVBoxLayout, QWidget)
+                              QTableWidgetItem, QToolButton, QGridLayout, QVBoxLayout, QWidget)
 
 from ..classification import TAXONOMY
 from .. import __version__
@@ -25,6 +25,7 @@ from .design import StatCard, TrackDelegate, icon
 from .operations import FileDialog
 from .playlists import PlaylistPage
 from .wording import readable
+from .workflow import WorkflowButton, polish
 
 STATE_LABELS = {"ready": "확인됨", "external_change": "외부 변경", "missing": "누락", "unavailable": "확인 불가",
                 "link_pending": "연결 보류", "replaced": "교체된 기록", "unclassified": "미분류", "unresolved": "확인 필요",
@@ -217,34 +218,49 @@ class MainWindow(QMainWindow):
             tags.addWidget(widget)
         tags.addStretch()
         main.addLayout(tags)
-        actions = QHBoxLayout()
-        self.scan_button = QPushButton("폴더 스캔")
-        self.scan_button.setIcon(icon("folder", "#728BA2"))
-        self.scan_button.setProperty("primary", True)
+        # Task entries stay separate from commands for the selected rows.
+        workflow = QGridLayout()
+        workflow.setSpacing(8)
+        self.scan_button = WorkflowButton(1, '음악 불러오기', '폴더 선택 · 새로 고침')
         self.scan_button.clicked.connect(self.start_scan)
-        actions.addWidget(self.scan_button)
-        self.bulk_button = QPushButton("여러 곡 분류 수정")
-        self.bulk_button.setToolTip("Ctrl/Shift로 선택한 곡 · 검색 결과 전체 · 라이브러리 전체")
-        self.bulk_button.clicked.connect(self.open_bulk)
-        actions.addWidget(self.bulk_button)
-        self.external_button = QPushButton('곡 정보 찾기')
+        self.external_button = WorkflowButton(2, '곡 정보 찾기 (선택)', '인터넷 참고 정보 · 분류 전 확인')
         self.external_button.clicked.connect(self.open_external)
-        actions.addWidget(self.external_button)
-        self.classify_button = QPushButton('AI로 분류')
-        self.classify_button.setToolTip('보낼 곡 정보와 비용을 확인한 뒤 AI로 분류합니다. 이용 요금이 발생합니다.')
+        self.classify_button = WorkflowButton(3, 'AI 분류 (유료)', '결과를 앱에 저장 · 파일은 유지')
         self.classify_button.clicked.connect(self.open_classify)
-        actions.addWidget(self.classify_button)
-        self.file_button = QPushButton('파일 정리 미리보기')
+        self.review_button = WorkflowButton(4, '분류 검토', '확인 필요한 곡 · 직접 수정')
+        self.review_button.clicked.connect(self.open_review)
+        self.file_button = WorkflowButton(5, '파일 정리 (선택)', '미리보기 → 실제 파일 변경')
         self.file_button.clicked.connect(self.open_file_ops)
-        actions.addWidget(self.file_button)
-        details = QPushButton("곡 상세")
-        details.setIcon(icon("detail"))
+        self.playlist_button = WorkflowButton(6, '재생목록 만들기', '음악 파일 복사 없이 목록 생성')
+        self.playlist_button.clicked.connect(self.open_playlists)
+        self.workflow_buttons = (self.scan_button, self.external_button, self.classify_button,
+                                 self.review_button, self.file_button, self.playlist_button)
+        for i, button in enumerate(self.workflow_buttons):
+            workflow.addWidget(button, i // 3, i % 3)
+            workflow.setColumnStretch(i % 3, 1)
+        main.insertLayout(0, workflow)
+        self.workflow_hint = QLabel()
+        self.workflow_hint.setObjectName('taskGuide')
+        self.workflow_hint.setWordWrap(True)
+        main.insertWidget(1, self.workflow_hint)
+        actions = QHBoxLayout()
+        self.selection_hint = QLabel()
+        self.selection_hint.setObjectName('subtle')
+        actions.addWidget(self.selection_hint, 1)
+        more = QToolButton()
+        more.setText('선택 곡 메뉴')
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(more)
+        self.bulk_button = menu.addAction('여러 곡의 분류 직접 수정')
+        self.bulk_button.triggered.connect(self.open_bulk)
+        details = QAction('곡 상세 표시', menu)
         details.setCheckable(True)
         details.setChecked(True)
         self.details_button = details
-        details.clicked.connect(self.toggle_details)
-        actions.addWidget(details)
-        actions.addStretch()
+        details.triggered.connect(self.toggle_details)
+        menu.addAction(details)
+        more.setMenu(menu)
+        actions.addWidget(more)
         main.addLayout(actions)
         self.splitter = QSplitter()
         self.model = TrackModel(self)
@@ -268,6 +284,8 @@ class MainWindow(QMainWindow):
             self.table.setColumnWidth(column, width)
         self.model.order_requested.connect(self.order_changed)
         self.table.selectionModel().currentRowChanged.connect(self.selection_changed)
+        self.table.selectionModel().selectionChanged.connect(self.update_selection_hint)
+        self.table.doubleClicked.connect(lambda *_: self.show_details())
         self.splitter.addWidget(self.table)
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setObjectName("detailScroll")
@@ -302,8 +320,8 @@ class MainWindow(QMainWindow):
         main.addLayout(page_controls)
         self.pages.addWidget(library_page)
 
-        playlist_page = PlaylistPage(self.library, lambda: self.settings, self)
-        self.pages.addWidget(playlist_page)
+        self.playlist_page = PlaylistPage(self.library, lambda: self.settings, self)
+        self.pages.addWidget(self.playlist_page)
         self.jobs_table = QTableWidget(0, 5)
         self.jobs_table.setHorizontalHeaderLabels(["작업", "상태", "처리 수", "보류/실패", "시작 시각 (UTC)"])
         self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -315,7 +333,7 @@ class MainWindow(QMainWindow):
         self.jobs_table.cellDoubleClicked.connect(self.open_job)
         layout.addWidget(self.player)
         footer = QHBoxLayout()
-        self.status = QLabel("음악 폴더를 스캔한 뒤 곡을 선택하세요. AI 분류와 파일 정리는 각각의 버튼에서 시작합니다.")
+        self.status = QLabel('위의 번호 순서로 진행하세요. 인터넷 조회와 파일 정리는 건너뛰어도 됩니다.')
         self.status.setObjectName("subtle")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, 1)
@@ -325,10 +343,11 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.progress)
         self.pause = QPushButton("일시정지")
         self.pause.clicked.connect(self.pause_scan)
-        self.cancel = QPushButton("취소")
+        self.cancel = QPushButton("불러오기 중단")
         self.cancel.clicked.connect(self.cancel_scan)
         for button in (self.pause, self.cancel):
             button.setEnabled(False)
+            button.setVisible(False)
             footer.addWidget(button)
         layout.addLayout(footer)
         self.setCentralWidget(container)
@@ -355,8 +374,63 @@ class MainWindow(QMainWindow):
         self.details_preference = checked
         self.detail_panel.setVisible(checked)
 
+    def show_details(self):
+        self.details_button.setChecked(True)
+        self.toggle_details(True)
+
+    def update_selection_hint(self, *_):
+        count = len(self.table.selectionModel().selectedRows())
+        self.selection_hint.setText(f'선택 {count:,}곡 · Ctrl/Shift로 여러 곡 선택 · 두 번 클릭하면 상세 보기')
+
+    def update_workflow(self, statistics):
+        busy = bool(self.worker and self.worker.isRunning())
+        available = bool(statistics['total'] and self.settings.music_root)
+        for button in self.workflow_buttons:
+            button.setEnabled(not busy and (button is self.scan_button or available))
+        self.bulk_button.setEnabled(not busy and bool(statistics['total']))
+        if busy:
+            hint, suggested = '음악을 불러오는 중입니다. 완료 후 곡을 선택해 다음 작업을 진행하세요.', None
+        elif not statistics['total']:
+            hint, suggested = '시작: 1번에서 음악 폴더를 선택하세요. 파일은 읽어서 목록에 등록합니다.', self.scan_button
+        elif statistics['unclassified']:
+            hint, suggested = ('다음: 곡 선택 → 2번 참고 정보 조회(선택) → 3번 AI 분류. 직접 수정은 선택 곡 메뉴에서 가능합니다.', self.classify_button)
+        elif statistics['unresolved']:
+            hint, suggested = '다음: 4번에서 확인 필요한 분류를 검토하세요. 5번은 파일 정리가 필요할 때, 6번은 목록을 만들 때 사용합니다.', self.review_button
+        else:
+            hint, suggested = '분류된 음악을 활용하세요. 5번에서 파일을 정리하거나, 바로 6번에서 재생목록을 만들 수 있습니다.', self.playlist_button
+        self.workflow_hint.setText(hint)
+        for button in self.workflow_buttons:
+            button.setProperty('suggested', button is suggested)
+            polish(button)
+
+    def open_review(self):
+        if not self.discard_edits():
+            return
+        # Old search/state filters must not hide songs needing review.
+        for widget in (self.search, self.major_filter, self.state_filter, self.mood_filter, self.concept_filter):
+            widget.blockSignals(True)
+            widget.clear() if widget is self.search else widget.setCurrentIndex(0)
+            widget.blockSignals(False)
+        self.search_timer.stop()
+        if self.navigation.currentRow() == 1:
+            self.offset = 0
+            self.refresh()
+        else:
+            self.navigation.setCurrentRow(1)
+        self.show_details()
+
+    def open_playlists(self):
+        if self.discard_edits():
+            self.playlist_page.open()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, 'workflow_buttons'):
+            compact = event.size().height() < 800
+            for button in self.workflow_buttons:
+                button.set_compact(compact)
+            for card in self.stat_cards.values():
+                card.setVisible(not compact)
         if hasattr(self, "detail_panel"):
             visible = self.details_preference and event.size().width() >= 1250
             self.detail_panel.setVisible(visible)
@@ -400,6 +474,7 @@ class MainWindow(QMainWindow):
             self.load_jobs()
 
     def refresh(self):
+        selected_ids = {self.model.rows[index.row()]['id'] for index in self.table.selectionModel().selectedRows()}
         statistics = self.library.statistics()
         for key, card in self.stat_cards.items():
             card.value.setText(f"{statistics[key]:,}")
@@ -414,17 +489,27 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"검색 결과 {total:,}곡 · {self.offset + 1 if rows else 0}–{self.offset + len(rows)} 표시 · 페이지 {self.offset // self.page_size + 1}")
         self.previous.setEnabled(self.offset > 0)
         self.next.setEnabled(self.offset + len(rows) < total)
+        self.previous.setVisible(self.offset > 0)
+        self.next.setVisible(self.offset + len(rows) < total)
         if rows:
             index = next((i for i, row in enumerate(rows) if row["id"] == current_id), 0)
             self.table.setCurrentIndex(self.model.index(index, 0))
+            matching = [i for i, row in enumerate(rows) if row['id'] in selected_ids]
+            if matching:
+                selection = self.table.selectionModel()
+                selection.clearSelection()
+                for i in matching:
+                    selection.select(self.model.index(i, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
         else:
             self.editor.current = None
             self.editor.setEnabled(False)
-            self.editor.title.setText("곡 없음 · 폴더 스캔 또는 필터를 확인하세요")
+            self.editor.title.setText('표시할 곡 없음 · 음악 불러오기 또는 검색 조건을 확인하세요')
             for edit in self.editor.edits.values():
                 edit.setChecked(False)
             self.player.stop()
         self.load_jobs()
+        self.update_selection_hint()
+        self.update_workflow(statistics)
 
     def selection_changed(self, index, previous):
         if self.refreshing or not index.isValid():
@@ -565,7 +650,7 @@ class MainWindow(QMainWindow):
         self.cancel.setEnabled(True)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
-        self.status.setText("전체 내용 해시·메타데이터 스캔 중")
+        self.status.setText('음악 파일과 곡 정보를 읽는 중입니다. 파일 내용은 바꾸지 않습니다.')
         self.worker = ScanWorker(self.library, Path(self.settings.music_root), self.settings.include_subfolders, self,
                                  exclude=self.settings.scan_exclude_folders, resume_job=resume_job if isinstance(resume_job, str) else None)
         self.worker.progress.connect(lambda count, failed: self.status.setText(f"스캔 · {count:,}곡 읽음 · {failed:,}개 확인 실패"))
@@ -573,6 +658,9 @@ class MainWindow(QMainWindow):
         self.worker.error.connect(lambda _: self.status.setText("스캔 실패 · 폴더 접근 상태를 확인하고 작업 기록을 보세요"))
         self.worker.finished.connect(self.scan_finished)
         self.worker.start()
+        for button in (self.pause, self.cancel):
+            button.setVisible(True)
+        self.update_workflow(self.library.statistics())
 
     def pause_scan(self):
         if self.worker and self.worker.isRunning():
@@ -606,6 +694,9 @@ class MainWindow(QMainWindow):
         self.pause.setText("일시정지")
         self.cancel.setEnabled(False)
         self.progress.setVisible(False)
+        self.pause.setVisible(False)
+        self.cancel.setVisible(False)
+        self.update_workflow(self.library.statistics())
         self.load_jobs()
 
     def open_settings(self):

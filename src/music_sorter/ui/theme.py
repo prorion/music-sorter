@@ -1,6 +1,6 @@
 from PySide6.QtGui import QColor, QPalette, QWheelEvent
 from PySide6.QtCore import QObject, QEvent
-from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QDialog, QDialogButtonBox, QLineEdit
+from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QDialog, QDialogButtonBox, QLineEdit, QMessageBox, QPushButton
 from pathlib import Path
 
 
@@ -8,6 +8,10 @@ class DialogButtonStyler(QObject):
     """Style standard dialog actions without changing keyboard defaults or callbacks."""
     def eventFilter(self, widget, event):
         if event.type() == QEvent.Type.Show and isinstance(widget, QDialog):
+            if not isinstance(widget, QMessageBox):
+                # Opening a task must not give Enter an implicit paid/destructive action.
+                for button in widget.findChildren(QPushButton):
+                    button.setAutoDefault(False)
             for box in widget.findChildren(QDialogButtonBox):
                 for button in box.buttons():
                     role = box.buttonRole(button)
@@ -86,7 +90,7 @@ def apply_theme(app, theme: str, font_scale: float):
         QLabel#subtle {{ font-size: 11px; }}
         QLabel#pageTitle {{ font-size: 25px; font-weight: 700; }}
         QLabel#brand {{ font-size: 19px; font-weight: 700; letter-spacing: 1px; }}
-        QLabel#statValue {{ font-size: 27px; font-weight: 700; }}
+        QLabel#statValue {{ font-size: 21px; font-weight: 700; }}
         QFrame#statCard, QWidget#detailPanel, QFrame#playerBar, QWidget#sidebar {{ background: {panel}; border: 1px solid {border}; border-radius: 14px; }}
         QWidget#sidebar {{ border: none; }}
         QWidget#trackEditor {{ background: {panel}; }}
@@ -122,6 +126,16 @@ def apply_theme(app, theme: str, font_scale: float):
         QPushButton[primary="true"]:disabled {{ background: {raised}; color: {muted}; border: 1px solid {border}; }}
         QPushButton[applyAction="true"]:disabled {{ background: {raised}; color: {muted}; border-color: {border}; }}
         QPushButton#ghost {{ background: transparent; border: none; }}
+        QPushButton#workflowButton {{ padding: 0; text-align: left; }}
+        QPushButton#workflowButton[suggested="true"] {{ border: 1px solid {accent}; background: {soft}; }}
+        QPushButton#workflowButton QLabel {{ background: transparent; border: none; }}
+        QLabel#workflowCaption {{ font-weight: 600; color: {text}; }}
+        QLabel#taskGuide {{ color: {muted}; padding: 4px 0; }}
+        QToolButton {{ background: {panel}; color: {text}; border: 1px solid {border}; border-radius: 8px; padding: 8px 18px 8px 10px; }}
+        QToolButton:hover {{ background: {raised}; }}
+        QMenu {{ background: {panel}; color: {text}; border: 1px solid {border}; padding: 6px; }}
+        QMenu::item {{ padding: 8px 22px; }}
+        QMenu::item:selected {{ background: {selected}; }}
         QPushButton#ghost:hover {{ background: {selected}; }}
         QPushButton#playButton {{ border-radius: 24px; min-width: 48px; max-width: 48px; min-height: 48px; max-height: 48px; padding: 0; background: {accent}; border: none; }}
         QTableView, QTableWidget {{ background: {panel}; border: 1px solid {border}; border-radius: 10px; gridline-color: {border}; selection-background-color: {selected}; selection-color: {text}; }}

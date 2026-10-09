@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabe
 from ..file_ops import FileOperations
 from ..scanner import ScanControl
 from ..llm import ProviderError
+from .workflow import task_guide
 
 
 class OperationWorker(QThread):
@@ -43,6 +44,7 @@ class FileDialog(QDialog):
         note = QLabel('실제 적용은 아래 버튼을 눌렀을 때 시작합니다. 음악 파일을 삭제하지 않습니다.\n파일 위치·이름·장르 변경은 작업 기록에서 되돌릴 수 있습니다. 분류를 확인하지 못한 곡의 기존 장르는 유지합니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
+        task_guide(layout, '정리할 항목 선택 → 미리보기 만들기 → 변경 내용 확인 → 파일 변경 적용. 이후 메인 6번에서 재생목록을 만드세요.')
         self.form = QHBoxLayout()
         self.scope = QComboBox()
         self.scope.addItem(f'선택한 {len(selected)}곡', 'selected')
@@ -61,6 +63,7 @@ class FileDialog(QDialog):
         self.table.setHorizontalHeaderLabels(['상태', '현재 경로', '변경 경로', '장르', '안내'])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
+        self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         for i, width in enumerate((100, 300, 300, 70, 250)):
             self.table.setColumnWidth(i, width)
@@ -81,7 +84,7 @@ class FileDialog(QDialog):
         buttons = QHBoxLayout()
         self.preview_button = QPushButton('미리보기 만들기')
         self.preview_button.clicked.connect(self.preview)
-        self.apply_button = QPushButton('미리보기대로 파일 변경')
+        self.apply_button = QPushButton('파일 변경 적용')
         self.apply_button.setProperty('primary', True)
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.apply)
@@ -95,6 +98,7 @@ class FileDialog(QDialog):
         close = QPushButton('닫기')
         close.clicked.connect(self.reject)
         for widget in (self.preview_button, self.apply_button, self.resume_button, self.undo_button, self.stop_button, close):
+            widget.setAutoDefault(False)
             buttons.addWidget(widget)
         layout.addLayout(buttons)
         if job_id:
@@ -102,6 +106,16 @@ class FileDialog(QDialog):
         else:
             self.resume_button.setEnabled(False)
             self.undo_button.setEnabled(False)
+        self.update_actions()
+
+    def update_actions(self):
+        self.apply_button.setVisible(bool(self.job_id))
+        self.resume_button.setVisible(self.resume_button.isEnabled())
+        self.undo_button.setVisible(self.undo_button.isEnabled())
+        self.stop_button.setVisible(self.busy())
+        self.preview_button.setProperty('primary', not bool(self.job_id))
+        self.preview_button.style().unpolish(self.preview_button)
+        self.preview_button.style().polish(self.preview_button)
 
     def busy(self):
         return self.worker is not None
@@ -116,6 +130,7 @@ class FileDialog(QDialog):
         self.apply_button.setEnabled(False)
         self.resume_button.setEnabled(False)
         self.undo_button.setEnabled(False)
+        self.update_actions()
 
     def start(self, action, callback):
         if self.busy():
@@ -127,6 +142,7 @@ class FileDialog(QDialog):
         for button in (self.preview_button, self.apply_button, self.resume_button, self.undo_button):
             button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.update_actions()
         self.worker.result.connect(callback)
         self.worker.error.connect(self.status.setText)
         self.worker.progress.connect(lambda count, blocked: self.status.setText(f'처리 {count:,} · 보류 {blocked:,}'))
@@ -182,7 +198,10 @@ class FileDialog(QDialog):
         self.resume_button.setEnabled(any(counts.get(state) for state in ('prepared', 'tag_done', 'file_done', 'undo_prepared')) and not self.busy())
         self.previous.setEnabled(self.offset > 0 and not self.busy())
         self.next.setEnabled(self.offset + len(rows) < total and not self.busy())
+        self.previous.setVisible(self.offset > 0)
+        self.next.setVisible(self.offset + len(rows) < total)
         self.page_label.setText(f'{total:,}개 계획 · 적용 가능 {counts.get("planned", 0):,} · 보류 {counts.get("blocked", 0):,} · 페이지 {self.offset // 200 + 1}')
+        self.update_actions()
 
     def turn_page(self, direction):
         self.offset = max(0, self.offset + direction * 200)

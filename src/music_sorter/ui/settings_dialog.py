@@ -153,7 +153,7 @@ class SettingsDialog(QDialog):
             classification.addRow(f"{prefix} 모델 ID", edit)
             combo.currentIndexChanged.connect(lambda _, i=len(self.providers) - 1: self.refresh_models(i))
         classification.addRow(self.note("AI / API 연결에서 불러온 모델을 선택하거나 모델 ID를 직접 입력하세요.\n연결 확인은 모델 목록 조회입니다. 실제 분류 가능 여부와 서비스 잔액은 실행할 때 확인합니다."))
-        classification.addRow(self.note("음악 목록의 「AI로 분류」에서 곡·처리 방법·예산(미국 달러)을 선택합니다.\n가사는 기본적으로 보내지 않으며, 다시 분류할 때만 선택해서 보낼 수 있습니다.\n요금 정보를 확인하지 못한 모델은 실행할 수 없습니다. AI 결과는 틀릴 수 있어 확인이 필요합니다."))
+        classification.addRow(self.note("메인 화면의 「3. AI 분류」에서 곡·처리 방법·예산(미국 달러)을 선택합니다.\n가사는 기본적으로 보내지 않으며, 다시 분류할 때만 선택해서 보낼 수 있습니다.\n요금 정보를 확인하지 못한 모델은 실행할 수 없습니다. AI 결과는 틀릴 수 있어 확인이 필요합니다."))
         catalog = QPushButton('분류 이름 관리')
         catalog.clicked.connect(self.open_catalog)
         classification.addRow(catalog)

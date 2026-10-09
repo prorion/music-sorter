@@ -2,8 +2,8 @@ from datetime import datetime
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget,
-                              QTableWidgetItem, QVBoxLayout, QHeaderView)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget,
+                              QTableWidgetItem, QVBoxLayout, QHeaderView, QWidget)
 
 from ..domestic import DomesticLookup, SITES, STATES, canonical_url
 from .operations import OperationWorker
@@ -49,18 +49,25 @@ class DomesticReviewDialog(QDialog):
         self.table.currentCellChanged.connect(lambda *_: self.source_changed())
         source_actions = QHBoxLayout()
         self.open_button = QPushButton('선택한 출처 열기')
+        self.open_button.setProperty('primary', True)
         self.open_button.clicked.connect(self.open_source)
         source_actions.addWidget(self.open_button)
+        self.add_toggle = QCheckBox('출처 직접 추가')
+        source_actions.addWidget(self.add_toggle)
         source_actions.addStretch()
         layout.addLayout(source_actions)
-        add = QHBoxLayout()
+        self.add_form = QWidget()
+        add = QHBoxLayout(self.add_form)
+        add.setContentsMargins(0, 0, 0, 0)
         self.url = QLineEdit()
         self.url.setPlaceholderText('추가로 대조할 멜론·벅스·지니 곡 상세 URL (최대 3개)')
         self.add_button = QPushButton('출처 추가·다시 대조')
         self.add_button.clicked.connect(lambda: self.start(True))
         add.addWidget(self.url, 1)
         add.addWidget(self.add_button)
-        layout.addLayout(add)
+        layout.addWidget(self.add_form)
+        self.add_form.setVisible(False)
+        self.add_toggle.toggled.connect(self.add_form.setVisible)
         self.status = QLabel()
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
@@ -70,10 +77,10 @@ class DomesticReviewDialog(QDialog):
         layout.addWidget(note)
         actions = QHBoxLayout()
         self.refresh_button = QPushButton('최신 정보로 다시 대조')
-        self.refresh_button.setProperty('primary', True)
         self.refresh_button.clicked.connect(lambda: self.start(False))
         self.stop = QPushButton('조회 중단')
         self.stop.setEnabled(False)
+        self.stop.setVisible(False)
         self.stop.clicked.connect(lambda: self.worker.control.cancelled.set() if self.worker else None)
         self.close_button = QPushButton('닫기')
         self.close_button.clicked.connect(self.reject)
@@ -152,6 +159,7 @@ class DomesticReviewDialog(QDialog):
         for widget in (self.url, self.add_button, self.refresh_button, self.close_button):
             widget.setEnabled(False)
         self.stop.setEnabled(True)
+        self.stop.setVisible(True)
         self.status.setText('공개 곡 정보를 조회하고 항목별로 대조하는 중입니다…')
         self.worker.result.connect(self.received)
         self.worker.error.connect(self.status.setText)
@@ -169,13 +177,17 @@ class DomesticReviewDialog(QDialog):
         for widget in (self.url, self.add_button, self.refresh_button, self.close_button):
             widget.setEnabled(True)
         self.stop.setEnabled(False)
+        self.stop.setVisible(False)
 
     def reject(self):
-        if not self.worker:
-            super().reject()
+        if self.worker:
+            self.status.setText('조회 중입니다. 「조회 중단」을 누른 뒤 종료를 기다려 주세요.')
+            return
+        super().reject()
 
     def closeEvent(self, event):
         if self.worker:
+            self.reject()
             event.ignore()
         else:
             super().closeEvent(event)
