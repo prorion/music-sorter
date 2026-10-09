@@ -34,6 +34,13 @@ def test_workflow_routes_selected_songs_without_executing_tasks(qtbot, library, 
     assert len(opened) == 3 and all(ids == expected and worker is None for _, ids, worker in opened)
     assert len(library.jobs()) == before and song.read_bytes() == b'original-audio'
     assert '선택 2곡' in window.selection_hint.text()
+    playlists = []
+    monkeypatch.setattr('music_sorter.ui.playlists.PlaylistDialog.exec', lambda dialog: playlists.append(dialog.settings.music_root) or 0)
+    window.playlist_button.click()
+    window.navigation.setCurrentRow(3)
+    assert playlists == [str(root), str(root)] and window.navigation.currentRow() == 0
+    window.navigation.setCurrentRow(4)
+    assert window.pages.currentWidget() is window.jobs_table
 
 
 def test_empty_classification_plan_returns_to_editable_options_without_submitting(qtbot, library, root, song, fake_reader):
@@ -73,12 +80,18 @@ def test_review_entry_reveals_candidates_hidden_by_old_filters(qtbot, library, r
 def test_empty_library_only_enables_import_and_busy_scan_blocks_next_tasks(qtbot, library, root, song, fake_reader, tmp_path):
     window = MainWindow(library, Settings(music_root=str(root)), tmp_path / 'settings.json')
     qtbot.addWidget(window)
+    window.show()
+    assert window.detail_panel.isHidden() and not window.details_button.isEnabled()
+    assert not window.editor.save_button.isEnabled()
+    assert all(button.isHidden() for button in window.editor.unlock_buttons.values())
+    assert window.selection_menu.isHidden()
     assert window.scan_button.isEnabled()
     assert all(not button.isEnabled() for button in window.workflow_buttons[1:])
     window.start_scan()
     assert all(not button.isEnabled() for button in window.workflow_buttons)
     qtbot.waitUntil(lambda: not window.worker.isRunning(), timeout=10000)
     qtbot.waitUntil(lambda: window.classify_button.isEnabled(), timeout=10000)
+    assert not window.detail_panel.isHidden() and window.details_button.isEnabled()
     assert song.read_bytes() == b'original-audio'
 
 

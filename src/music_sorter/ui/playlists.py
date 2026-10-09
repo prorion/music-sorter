@@ -163,29 +163,3 @@ class PlaylistDialog(QDialog):
             event.ignore()
         else:
             super().closeEvent(event)
-
-
-class PlaylistPage(QWidget):
-    def __init__(self, library, settings_getter, parent=None):
-        super().__init__(parent)
-        self.library, self.settings_getter = library, settings_getter
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('같은 음악을 장르·분위기·컨셉별로 모아 들을 수 있어요.\n음악 파일을 복사하지 않고 재생할 곡 목록만 만듭니다.'))
-        open_button = QPushButton('재생목록 설정 열기')
-        open_button.setProperty('primary', True)
-        open_button.clicked.connect(self.open)
-        layout.addWidget(open_button)
-        layout.addStretch()
-
-    def open(self):
-        settings = self.settings_getter()
-        if not settings.music_root:
-            self.window().status.setText('먼저 음악 라이브러리의 1번에서 음악을 불러오세요.')
-            return
-        worker = getattr(self.window(), 'worker', None)
-        if worker and worker.isRunning():
-            self.window().status.setText('진행 중인 스캔을 마치거나 취소한 뒤 재생목록을 생성하세요.')
-            return
-        if hasattr(self.window(), 'player'):
-            self.window().player.stop()
-        PlaylistDialog(self.library, settings, self).exec()

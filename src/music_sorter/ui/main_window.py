@@ -23,7 +23,7 @@ from .settings_dialog import SettingsDialog
 from .theme import apply_theme
 from .design import StatCard, TrackDelegate, icon
 from .operations import FileDialog
-from .playlists import PlaylistPage
+from .playlists import PlaylistDialog
 from .wording import readable
 from .workflow import WorkflowButton, polish
 
@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         self.selection_hint = QLabel()
         self.selection_hint.setObjectName('subtle')
         actions.addWidget(self.selection_hint, 1)
-        more = QToolButton()
+        more = self.selection_menu = QToolButton()
         more.setText('선택 곡 메뉴')
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)
@@ -320,8 +320,6 @@ class MainWindow(QMainWindow):
         main.addLayout(page_controls)
         self.pages.addWidget(library_page)
 
-        self.playlist_page = PlaylistPage(self.library, lambda: self.settings, self)
-        self.pages.addWidget(self.playlist_page)
         self.jobs_table = QTableWidget(0, 5)
         self.jobs_table.setHorizontalHeaderLabels(["작업", "상태", "처리 수", "보류/실패", "시작 시각 (UTC)"])
         self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -372,7 +370,7 @@ class MainWindow(QMainWindow):
 
     def toggle_details(self, checked):
         self.details_preference = checked
-        self.detail_panel.setVisible(checked)
+        self.detail_panel.setVisible(checked and bool(self.model.rows))
 
     def show_details(self):
         self.details_button.setChecked(True)
@@ -388,6 +386,7 @@ class MainWindow(QMainWindow):
         for button in self.workflow_buttons:
             button.setEnabled(not busy and (button is self.scan_button or available))
         self.bulk_button.setEnabled(not busy and bool(statistics['total']))
+        self.selection_menu.setVisible(bool(statistics['total']))
         if busy:
             hint, suggested = '음악을 불러오는 중입니다. 완료 후 곡을 선택해 다음 작업을 진행하세요.', None
         elif not statistics['total']:
@@ -420,8 +419,14 @@ class MainWindow(QMainWindow):
         self.show_details()
 
     def open_playlists(self):
-        if self.discard_edits():
-            self.playlist_page.open()
+        if self.worker and self.worker.isRunning() or not self.settings.music_root or not self.library.statistics()['total']:
+            self.status.setText('먼저 1번에서 음악을 불러오고 완료를 기다려 주세요.')
+            return
+        if not self.discard_edits():
+            return
+        self.player.stop()
+        PlaylistDialog(self.library, self.settings, self).exec()
+        self.refresh()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -432,7 +437,7 @@ class MainWindow(QMainWindow):
             for card in self.stat_cards.values():
                 card.setVisible(not compact)
         if hasattr(self, "detail_panel"):
-            visible = self.details_preference and event.size().width() >= 1250
+            visible = self.details_preference and event.size().width() >= 1250 and bool(self.model.rows)
             self.detail_panel.setVisible(visible)
             self.details_button.setChecked(visible)
 
@@ -468,12 +473,14 @@ class MainWindow(QMainWindow):
                             root=self.settings.music_root or None).exec()
             self.navigation.setCurrentRow(0)
         elif index == 3:
-            self.pages.setCurrentIndex(1)
+            self.open_playlists()
+            self.navigation.setCurrentRow(0)
         elif index == 4:
-            self.pages.setCurrentIndex(2)
+            self.pages.setCurrentIndex(1)
             self.load_jobs()
 
     def refresh(self):
+        had_rows = bool(self.model.rows)
         selected_ids = {self.model.rows[index.row()]['id'] for index in self.table.selectionModel().selectedRows()}
         statistics = self.library.statistics()
         for key, card in self.stat_cards.items():
@@ -500,14 +507,22 @@ class MainWindow(QMainWindow):
                 selection.clearSelection()
                 for i in matching:
                     selection.select(self.model.index(i, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+            if not had_rows:
+                visible = self.details_preference and self.width() >= 1250
+                self.detail_panel.setVisible(visible)
+                self.details_button.setChecked(visible)
         else:
             self.editor.current = None
             self.editor.setEnabled(False)
+            self.editor.save_button.setEnabled(False)
+            self.detail_panel.setVisible(False)
+            self.details_button.setChecked(False)
             self.editor.title.setText('표시할 곡 없음 · 음악 불러오기 또는 검색 조건을 확인하세요')
             for edit in self.editor.edits.values():
                 edit.setChecked(False)
             self.player.stop()
         self.load_jobs()
+        self.details_button.setEnabled(bool(rows))
         self.update_selection_hint()
         self.update_workflow(statistics)
 

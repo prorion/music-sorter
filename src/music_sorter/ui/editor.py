@@ -92,6 +92,7 @@ class TrackEditor(QWidget):
             row.addStretch()
             unlock = QPushButton("자동 수정 허용")
             unlock.setObjectName("ghost")
+            unlock.setVisible(False)
             unlock.setToolTip("이 항목을 다음 AI 분류에서 수정할 수 있게 합니다. 지금 분류를 실행하지는 않습니다.")
             unlock.clicked.connect(lambda _, a=axis: self.unlock(a))
             self.unlock_buttons[axis] = unlock
