@@ -1,0 +1,18 @@
+{
+  "name": "레코드 아카이브",
+  "approved_on": "2026-10-09",
+  "selected_concept": 4,
+  "generator": "built-in image_gen",
+  "source_sha256": "79e2f424a7642fccb084020abc60492361becb728164e54d6b5674a185054fbc",
+  "ico_sizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "packaging": "Qt smooth downscaling and multi-resolution ICO encoding; original PNG unchanged",
+  "prompt": "Use case: logo-brand. Create ONE distinctive Windows desktop app icon concept for music-sorter, an application for organizing a personal music collection. Concept 4 of 5: VINYL ARCHIVE. A bold black vinyl disc with a small warm amber center label nestled into three offset rectangular library index cards with chunky rounded tab shapes. A compact cohesive silhouette conveys records and organized categories. Modern retro graphic aesthetic, dark charcoal, warm golden amber, muted terracotta accent; opaque warm amber rounded-square app tile. Prefer simple screen-print-like flat masses with only 2 thick circular grooves, no distressed texture, no fine lines. Slight asymmetry of cards, but stable centered square composition, generous safe area, symbol fills roughly 70 percent. Strong visual hierarchy and readable at 24px. Actual transparent canvas outside the rounded-square tile. No text on the disc or cards, no typography, no watermark, no tabletop, no mockup, no extra variants. One finished icon only."
+}

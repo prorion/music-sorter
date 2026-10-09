@@ -186,13 +186,16 @@ def main():
     staging.mkdir()
     config = configparser.ConfigParser()
     config["app"] = {"title": "music-sorter", "project_dir": str(root), "input_file": str(root / "main.py"),
-                     "exec_directory": str(staging), "project_file": "", "icon": ""}
+                     "exec_directory": str(staging), "project_file": "",
+                     "icon": str(root / "src/music_sorter/resources/app-icon.ico")}
     config["python"] = {"python_path": sys.executable, "packages": "Nuitka==4.2.2"}
     config["qt"] = {"modules": "Core,Gui,Widgets,Multimedia", "plugins": "multimedia,platforms,imageformats,styles",
                     "qml_files": "", "excluded_qml_plugins": ""}
     config["nuitka"] = {"mode": "standalone", "macos.permissions": "",
                         "extra_args": "--quiet --noinclude-qt-translations --include-package=music_sorter "
                         "--include-package-data=music_sorter --windows-console-mode=disable --msvc=latest "
+                        "--include-data-files=src/music_sorter/resources/app-icon.ico=music_sorter/resources/app-icon.ico "
+                        "--include-data-files=src/music_sorter/resources/app-icon.png=music_sorter/resources/app-icon.png "
                         "--include-package=openai.resources.responses --include-package=openai.types.responses "
                         "--include-module=openai.resources.files --include-module=openai.resources.batches "
                         "--include-package=anthropic.resources.messages --include-package=anthropic.types "

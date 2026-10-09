@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QLockFile, QLoggingCategory, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .database import Library
@@ -34,7 +35,11 @@ def main(argv=None) -> int:
         parser.error('--smoke-sdk는 --smoke-screen과 함께 사용하세요.')
     if args.smoke_recycle and not (args.smoke_screen and args.smoke_media):
         parser.error('--smoke-recycle은 --smoke-screen 및 --smoke-media와 함께 사용하세요.')
+    if sys.platform == 'win32':
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('music-sorter.Desktop')
     app = QApplication(sys.argv[:1])
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'resources' / 'app-icon.ico')))
     QLoggingCategory.setFilterRules("qt.multimedia.ffmpeg.*=false")
     app.setApplicationName("music-sorter")
     app.setOrganizationName("music-sorter")
@@ -104,6 +109,8 @@ def main(argv=None) -> int:
                 media_loaded = window.player.player.duration() > 0
                 advanced = window.player.player.position() > 0
                 report = dict(rendered=True, device_pixel_ratio=window.devicePixelRatioF(),
+                              app_icon_loaded=not window.windowIcon().isNull(),
+                              app_icon_sizes=[size.width() for size in app.windowIcon().availableSizes()],
                               media_requested=bool(args.smoke_media), media_loaded=media_loaded,
                               media_position_advanced=advanced)
                 if sdk_report:
