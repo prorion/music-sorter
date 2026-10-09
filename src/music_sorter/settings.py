@@ -78,6 +78,7 @@ class Settings:
     musicbrainz_enabled: bool = True
     musicbrainz_contact: str = ''
     lastfm_enabled: bool = True
+    domestic_enabled: bool = True
     rollback_limit_gib: float = 10.0
     playlist_format: str = 'm3u8'
     llm_tracks_per_request: int = 20
@@ -96,7 +97,7 @@ class Settings:
         return settings
 
     def validate(self) -> None:
-        for name in ('include_subfolders', 'notify_on_completion', 'musicbrainz_enabled', 'lastfm_enabled', 'include_lyrics_default'):
+        for name in ('include_subfolders', 'notify_on_completion', 'musicbrainz_enabled', 'lastfm_enabled', 'domestic_enabled', 'include_lyrics_default'):
             if type(getattr(self, name)) is not bool:
                 raise ValueError('설정의 논리값 형식을 확인하세요.')
         for name, low, high in [('llm_tracks_per_request', 1, 20), ('llm_max_output_tokens_per_track', 256, 2000),

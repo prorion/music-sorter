@@ -22,7 +22,7 @@ class ExternalDialog(QDialog):
         heading = QLabel('인터넷 곡 정보')
         heading.setObjectName('pageTitle')
         layout.addWidget(heading)
-        note = QLabel('MusicBrainz와 Last.fm에서 곡 정보와 참고 장르를 찾습니다.\n같은 곡인지 확실하지 않으면 직접 확인해야 합니다. 이 조회만으로 기존 분류나 음악 파일이 바뀌지는 않습니다.')
+        note = QLabel('멜론·벅스의 공개 곡 정보를 검색하고 출처별 장르를 대조합니다. MusicBrainz·Last.fm 정보도 함께 찾습니다.\n검색·대조에는 AI 비용이 들지 않습니다. 이 조회만으로 기존 분류나 음악 파일이 바뀌지는 않습니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
         form = QHBoxLayout()
@@ -50,19 +50,21 @@ class ExternalDialog(QDialog):
         pages.addStretch()
         pages.addWidget(self.next)
         layout.addLayout(pages)
-        self.status = QLabel('설정의 연락처·키가 없으면 해당 출처는 건너뜁니다. 전송 정보: 제목·아티스트 검색어.')
+        self.status = QLabel('국내 검색은 별도 키 없이 사용할 수 있습니다. 전송 정보: 제목·아티스트 검색어. MusicBrainz·Last.fm은 설정이 필요합니다.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
         self.start_button = QPushButton('곡 정보 찾기')
         self.start_button.setProperty('primary', True)
         self.start_button.clicked.connect(self.start)
+        self.details_button = QPushButton('선택한 조회 결과 보기')
+        self.details_button.clicked.connect(lambda: self.inspect(self.table.currentRow(), 0))
         self.stop = QPushButton('조회 중단')
         self.stop.setEnabled(False)
         self.stop.clicked.connect(lambda: self.worker.control.cancelled.set() if self.worker else None)
         close = QPushButton('닫기')
         close.clicked.connect(self.reject)
-        for widget in (self.start_button, self.stop, close):
+        for widget in (self.start_button, self.details_button, self.stop, close):
             buttons.addWidget(widget)
         layout.addLayout(buttons)
         self.scope.currentIndexChanged.connect(self.scope_changed)
@@ -79,9 +81,11 @@ class ExternalDialog(QDialog):
         else:
             tracks, total = self.library.list_tracks(limit=100, offset=self.offset, **(self.filters if self.scope.currentData() == 'filtered' else {}))
         lookup = ExternalLookup(self.library, self.settings)
-        self.rows = [(track, service, lookup.cached(track, service)) for track in tracks for service in ('musicbrainz', 'lastfm')]
+        services = ('domestic', 'musicbrainz', 'lastfm') if self.settings.domestic_enabled else ('musicbrainz', 'lastfm')
+        self.rows = [(track, service, lookup.cached(track, service)) for track in tracks for service in services]
         self.table.setRowCount(len(self.rows))
         states = dict(matched='녹음 연결', reference='참고 태그', ambiguous='연결 보류', not_found='결과 없음', skipped='건너뜀', failed='조회 오류')
+        states.update(corroborated='여러 출처에서 일치', conflict='출처마다 정보가 다름', insufficient='근거 부족')
         for i, (track, service, result) in enumerate(self.rows):
             state = states.get(result['state'], result['state']) if result else '미조회'
             for j, value in enumerate((track['title'] + ' · ' + track['artist'], PROVIDERS.get(service, service), state)):
@@ -98,9 +102,14 @@ class ExternalDialog(QDialog):
             self.refresh()
 
     def inspect(self, row, column):
-        if self.worker or row >= len(self.rows):
+        if self.worker or not 0 <= row < len(self.rows):
             return
         track, service, result = self.rows[row]
+        if service == 'domestic':
+            from .domestic_dialog import DomesticReviewDialog
+            DomesticReviewDialog(self.library, self.settings, track, result, self).exec()
+            self.refresh()
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle('찾은 곡 비교·선택')
         dialog.resize(900, 660)
@@ -178,7 +187,7 @@ class ExternalDialog(QDialog):
             return
         force = self.force.isChecked()
         def action(control, progress):
-            lookup = ExternalLookup(self.library, self.settings, CredentialStore().get('lastfm') or '')
+            lookup = ExternalLookup(self.library, self.settings, CredentialStore().get('lastfm') or '', control=control)
             job = self.library.start_job('external')
             count = failed = 0
             samples = []
@@ -189,12 +198,14 @@ class ExternalDialog(QDialog):
                     if track['file_state'] != 'ready':
                         failed += 1
                         continue
-                    for service in ('musicbrainz', 'lastfm'):
+                    services = ('domestic', 'musicbrainz', 'lastfm') if self.settings.domestic_enabled else ('musicbrainz', 'lastfm')
+                    for service in services:
                         control.checkpoint()
                         try:
                             result = lookup.lookup(track, service, force)
                         except ValueError as error:
                             result = lookup.record_failure(track, service, str(error))
+                        if result.get('state') == 'failed' or result.get('failures') or any(s.get('album_error') for s in result.get('sources', [])):
                             failed += 1
                         if len(samples) < 200:
                             samples.append((track['title'], service, result.get('reason', result['state'])))

@@ -75,11 +75,11 @@ def test_external_cached_review_pages_cover_all_selected_tracks(qtbot, library, 
     ids = [track['id'] for track in library.list_tracks(limit=500)[0]]
     dialog = ExternalDialog(library, Settings(), ids, {})
     qtbot.addWidget(dialog)
-    assert len(dialog.rows) == 200 and dialog.next.isEnabled()
+    assert len(dialog.rows) == 300 and dialog.next.isEnabled()
     dialog.turn_page(1)
-    assert len(dialog.rows) == 200 and dialog.next.isEnabled()
+    assert len(dialog.rows) == 300 and dialog.next.isEnabled()
     dialog.turn_page(1)
-    assert len(dialog.rows) == 10 and not dialog.next.isEnabled()
+    assert len(dialog.rows) == 15 and not dialog.next.isEnabled()
     assert dialog.table.item(0, 2).text() == '미조회'
 
 

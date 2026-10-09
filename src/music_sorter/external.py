@@ -116,9 +116,10 @@ def match_lastfm(track, payload):
 
 
 class ExternalLookup:
-    def __init__(self, library, settings, lastfm_key='', fetch=None):
+    def __init__(self, library, settings, lastfm_key='', fetch=None, domestic_fetch=None, control=None):
         self.library, self.settings, self.lastfm_key = library, settings, lastfm_key
         self.fetch = fetch or self._fetch
+        self.domestic_fetch, self.control = domestic_fetch, control
 
     def _fetch(self, service, params):
         global _next_mb
@@ -162,7 +163,7 @@ class ExternalLookup:
         return {**json.loads(row['result']), 'queried_at': row['created_at'], 'cached': True} if row else None
 
     def record_failure(self, track, service, reason):
-        if service not in {'musicbrainz', 'lastfm'}:
+        if service not in {'musicbrainz', 'lastfm', 'domestic'}:
             raise ValueError('지원하지 않는 외부 음악 서비스입니다.')
         # Caller passes only the adapter's safe messages, never raw provider exceptions.
         result = dict(state='failed', reason=reason[:600], evidence=[])
@@ -172,11 +173,17 @@ class ExternalLookup:
         return result
 
     def lookup(self, track, service, refresh=False):
+        if service == 'domestic' and not self.settings.domestic_enabled:
+            return dict(state='skipped', reason='국내 검색 사용 안 함', evidence=[])
         cached = self.cached(track, service)
         if cached and not refresh:
             return cached
         if not track['title'] or not track['artist']:
             return dict(state='skipped', reason='제목·아티스트 정보 부족', evidence=[])
+        if service == 'domestic':
+            from .domestic import DomesticLookup
+            return DomesticLookup(self.library, self.settings, self.domestic_fetch, self.control).lookup(
+                track, refresh, (cached or {}).get('extra_urls', []))
         if service == 'musicbrainz':
             if not self.settings.musicbrainz_enabled or not self.settings.musicbrainz_contact:
                 return dict(state='skipped', reason='MusicBrainz 사용 또는 연락처 미설정', evidence=[])
@@ -262,5 +269,5 @@ class ExternalLookup:
         return result
 
     def evidence(self, track):
-        services = [('musicbrainz', self.settings.musicbrainz_enabled), ('lastfm', self.settings.lastfm_enabled)]
+        services = [('musicbrainz', self.settings.musicbrainz_enabled), ('lastfm', self.settings.lastfm_enabled), ('domestic', self.settings.domestic_enabled)]
         return [item for service, enabled in services if enabled for item in (self.cached(track, service) or {}).get('evidence', [])]

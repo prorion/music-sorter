@@ -289,7 +289,7 @@ def test_external_missing_credentials_skips_and_does_not_classify(qtbot, library
     scan_library(library, root)
     track = library.list_tracks()[0][0]
     monkeypatch.setattr('music_sorter.ui.external_dialog.CredentialStore.get', lambda *_: None)
-    dialog = ExternalDialog(library, Settings(music_root=str(root)), [track['id']], {})
+    dialog = ExternalDialog(library, Settings(music_root=str(root), domestic_enabled=False), [track['id']], {})
     qtbot.addWidget(dialog)
     dialog.show()
     dialog.start()

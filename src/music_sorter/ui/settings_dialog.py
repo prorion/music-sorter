@@ -182,6 +182,10 @@ class SettingsDialog(QDialog):
         self.lastfm_enabled = QCheckBox('Last.fm 곡 정보·참고 태그 조회')
         self.lastfm_enabled.setChecked(settings.lastfm_enabled)
         external.addRow(self.lastfm_enabled)
+        self.domestic_enabled = QCheckBox('국내 음악 사이트 검색·출처 대조 (멜론·벅스·지니)')
+        self.domestic_enabled.setChecked(settings.domestic_enabled)
+        external.addRow(self.domestic_enabled)
+        external.addRow(self.note('별도 API 키 없이 공개 곡 정보를 찾고 비교합니다. 검색·대조에는 AI를 호출하지 않습니다.\n두 출처의 장르가 일치할 때만 AI 분류의 확인된 참고 장르로 전달합니다.\n사이트의 조회 차단이나 페이지 변경은 오류로 표시합니다.'))
         external.addRow(self.note('「곡 정보 찾기」에서 조회하며 찾은 정보를 앱에 저장해 다음 조회에 재사용합니다.\nMusicBrainz는 연락처가 없으면, Last.fm은 키가 없으면 건너뜁니다.\n제목·아티스트·버전이 다른 후보는 자동 연결하지 않습니다.'))
         output = self.page("파일 정리·재생목록")
         self.rollback_limit = QDoubleSpinBox()
@@ -429,6 +433,7 @@ class SettingsDialog(QDialog):
                           anthropic_workspace_id=self.workspace.text().strip(),
                           musicbrainz_enabled=self.musicbrainz_enabled.isChecked(), musicbrainz_contact=self.musicbrainz_contact.text().strip(),
                           lastfm_enabled=self.lastfm_enabled.isChecked(), rollback_limit_gib=self.rollback_limit.value(),
+                          domestic_enabled=self.domestic_enabled.isChecked(),
                           playlist_format=self.playlist_format.currentData(),
                           include_lyrics_default=self.lyrics_default.isChecked(), **{name: control.value() for name, control in self.advanced.items()})
 

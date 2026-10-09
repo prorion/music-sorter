@@ -1,7 +1,7 @@
 """Presentation-only names; persisted provider, state and request values stay intact."""
 from ..classification import LABELS
 
-PROVIDERS = {'anthropic': 'Claude', 'openai': 'OpenAI', 'musicbrainz': 'MusicBrainz', 'lastfm': 'Last.fm'}
+PROVIDERS = {'anthropic': 'Claude', 'openai': 'OpenAI', 'musicbrainz': 'MusicBrainz', 'lastfm': 'Last.fm', 'domestic': '국내 사이트 대조'}
 EXECUTIONS = {'sync': '바로 처리', 'batch': '나중에 결과 받기'}
 SOURCES = {'manual': '직접 수정', 'llm': 'AI 분류', 'bulk': '여러 곡 수정', 'inherited': '기존 분류 이어받음'}
 ACTIONS = {'manual': '직접 수정', 'unlock': '자동 수정 허용', 'llm': 'AI 분류', 'bulk': '여러 곡 수정',
@@ -44,6 +44,8 @@ def classification_detail(inputs, result, reason):
             lines.append(' · '.join(str(item.get(key, '')) for key in ('service', 'title', 'artist', 'album', 'tags') if item.get(key)))
             if item.get('match_reason'):
                 lines.append('  연결 이유: ' + str(item['match_reason']))
+            if item.get('source_urls'):
+                lines.append('  출처: ' + item['source_urls'])
     lines.append('\nAI 분류 결과')
     if result:
         for axis, field in result.get('classification', {}).items():

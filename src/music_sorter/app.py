@@ -25,6 +25,7 @@ def main(argv=None) -> int:
     parser.add_argument("--smoke-media", type=Path, help="렌더 검증과 함께 복사본 MP3를 음소거 재생")
     parser.add_argument("--smoke-api", action="store_true", help="렌더 검증과 함께 등록된 키의 모델 목록만 조회")
     parser.add_argument('--smoke-sdk', action='store_true', help='SDK 직렬화·응답 검증. 네트워크·유료 요청 없이 수행')
+    parser.add_argument('--smoke-domestic', action='store_true', help='저장된 첫 곡의 국내 출처 비교 화면 검증. 네트워크 호출 없음')
     parser.add_argument('--smoke-recycle', action='store_true', help='새 MP3 검증 사본 두 개로 Windows 휴지통 이동 확인')
     args = parser.parse_args(argv)
     if args.smoke_media and not args.smoke_screen:
@@ -33,6 +34,8 @@ def main(argv=None) -> int:
         parser.error("--smoke-api는 --smoke-screen과 함께 사용하세요.")
     if args.smoke_sdk and not args.smoke_screen:
         parser.error('--smoke-sdk는 --smoke-screen과 함께 사용하세요.')
+    if args.smoke_domestic and (not args.smoke_screen or args.smoke_api):
+        parser.error('--smoke-domestic는 --smoke-screen과 함께, --smoke-api 없이 사용하세요.')
     if args.smoke_recycle and not (args.smoke_screen and args.smoke_media):
         parser.error('--smoke-recycle은 --smoke-screen 및 --smoke-media와 함께 사용하세요.')
     if sys.platform == 'win32':
@@ -86,6 +89,7 @@ def main(argv=None) -> int:
                 window.status.setText(f'파일 작업 기록 복구 {recovery["recovered"]} · 확인 필요 {len(recovery["pending"])} · 작업 이력에서 확인하세요')
         window.show()
         api_dialog = None
+        domestic_dialog = None
         api_report = {}
         sdk_report = None
         recycle_report = None
@@ -95,6 +99,17 @@ def main(argv=None) -> int:
         if args.smoke_sdk:
             from .selfcheck import verify_sdks
             sdk_report = verify_sdks()
+        if args.smoke_domestic:
+            from .external import ExternalLookup
+            from .ui.domestic_dialog import DomesticReviewDialog
+            tracks, _ = library.list_tracks(limit=1)
+            if not tracks:
+                raise ValueError('검증용 곡 정보와 조회 캐시가 필요합니다.')
+            cached = ExternalLookup(library, settings).cached(tracks[0], 'domestic')
+            if not cached:
+                raise ValueError('국내 조회 캐시가 필요합니다.')
+            domestic_dialog = DomesticReviewDialog(library, settings, tracks[0], cached, window)
+            domestic_dialog.show()
         if args.smoke_api:
             api_dialog = SettingsDialog(settings, config_path, library, window)
             api_dialog.menu.setCurrentRow(2)
@@ -115,13 +130,18 @@ def main(argv=None) -> int:
                               media_position_advanced=advanced)
                 if sdk_report:
                     report['sdk_selfcheck'] = sdk_report
+                if domestic_dialog:
+                    report['domestic_comparison'] = dict(state=domestic_dialog.result['state'],
+                                                        rows=domestic_dialog.table.rowCount(),
+                                                        source_count=domestic_dialog.result.get('source_count', 0),
+                                                        network_requests=0)
                 if recycle_report:
                     report['recycle_selfcheck'] = recycle_report
                 if api_dialog:
                     report["connections"] = api_report
                     report["generation_requests"] = 0
                 args.smoke_screen.with_suffix(".json").write_text(json.dumps(report, indent=2), "utf-8")
-                if not (api_dialog or window).grab().save(str(args.smoke_screen)):
+                if not (api_dialog or domestic_dialog or window).grab().save(str(args.smoke_screen)):
                     app.exit(2)
                 elif args.smoke_media and not (media_loaded and advanced):
                     app.exit(3)
